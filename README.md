@@ -82,10 +82,10 @@ Files in `./example`
 
 ```
 DeepMM correct --folder_path ./example/final.contigs.fa \
-                --model_weight_path ./finetune-model-weight/cami_finetune_checkPoint.pt \
-                --fine_tune \
-                --threads 8 \
-                --gpu_device cuda:0
+               --model_weight_path ./finetune-model-weight/cami_finetune_checkPoint.pt \
+               --fine_tune \
+               --threads 8 \
+               --gpu_device cuda:0
 ```
 The output is under `./example/deepmm_output`
 
@@ -217,12 +217,11 @@ DeepMM finetune --epochs 50 \
 You can simulate your own pretrain datasets with differe settings. The dataset simulation processing is similar with `Fine-tuning` seciton. However, this is time-consuming, and fine-tuning can help model already.
 
 ```
-DeepMM pretrain_data \
-      --data_folder /path/to/data \
-      --feature_folder /path/to/data \
-      --label all_alignments_final-contigs.tsv \
-      --assembly final.contigs.fa \
-      --alignment sort.bam \
+DeepMM pretrain_data --data_folder /path/to/data \
+                     --feature_folder /path/to/data \
+                     --label all_alignments_final-contigs.tsv \
+                     --assembly final.contigs.fa \
+                     --alignment sort.bam \
 ```
 
 ```
