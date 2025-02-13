@@ -144,7 +144,7 @@ def correct(options):
     input_file = SeqIO.parse(original_file, "fasta")
     df = pd.read_csv(f'{output_folder_path}/assembly_prediction.tsv', sep='\t')
     score_cut = config['threshold']
-    breakcontigs = df.loc[df['tChimeric_Prediction'] > score_cut,]
+    breakcontigs = df.loc[df['Chimeric_Prediction'] > score_cut,]
     breakcontigs = breakcontigs.loc[breakcontigs['Chimeric_BreakPoint'] > config['min_split_length'], ]
     breakcontigs = breakcontigs.loc[(breakcontigs['length'] - breakcontigs['Chimeric_BreakPoint']) > config['min_split_length'], ]
     breakcontigs = list(np.unique(breakcontigs['contig']))
