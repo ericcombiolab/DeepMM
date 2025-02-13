@@ -122,7 +122,7 @@ def correct(options):
         if len(contig_test[contig_name]['bp_pred']) > 0:
             breakcontigs.append(contig_name)
             
-    with open(f'{output_folder_path}/contig_prediction.tsv', 'w') as f:
+    with open(f'{output_folder_path}/assembly_prediction.tsv', 'w') as f:
         f.write('Assembly\tBreakPoint\tPrediction\tLength\tChimeric_BreakPoint\tChimeric_Prediction\n')
         for contig_name in total_contig_name:
             if contig_name in breakcontigs:
