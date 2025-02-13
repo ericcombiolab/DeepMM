@@ -32,7 +32,7 @@ The above packages are necessary for data preparation.
 ```
 git clone https://github.com/ericcombiolab/DeepMM.git
 ```
-- install and download [training models](https://zenodo.org/record/4781819#.YKm_omYzZTY) 
+- install
 
 ```
 cd DeepMM
