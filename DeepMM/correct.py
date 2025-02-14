@@ -146,7 +146,7 @@ def correct(options):
     score_cut = config['threshold']
     breakcontigs = df.loc[df['Chimeric_Prediction'] > score_cut,]
     breakcontigs = breakcontigs.loc[breakcontigs['Chimeric_BreakPoint'] > config['min_split_length'], ]
-    breakcontigs = breakcontigs.loc[(breakcontigs['length'] - breakcontigs['Chimeric_BreakPoint']) > config['min_split_length'], ]
+    breakcontigs = breakcontigs.loc[(breakcontigs['Length'] - breakcontigs['Chimeric_BreakPoint']) > config['min_split_length'], ]
     breakcontigs = list(np.unique(breakcontigs['contig']))
     
     with open(corrected_contig_file, "w") as corrected_file:
