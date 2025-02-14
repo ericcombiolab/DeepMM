@@ -152,7 +152,7 @@ def correct(options):
     with open(corrected_contig_file, "w") as corrected_file:
         for record in tqdm(input_file, desc = f'Correting ... '):
             if record.id in breakcontigs:
-                bp = int(df.loc[df['contig'] == record.id, 'Chimeric_BreakPoint'].values[0])
+                bp = int(df.loc[df['Assembly'] == record.id, 'Chimeric_BreakPoint'].values[0])
                 corrected_file.write(">" + record.id + "_1\n")
                 corrected_file.write(str(record.seq[:bp]) + "\n")
                 corrected_file.write(">" + record.id + "_2\n")
