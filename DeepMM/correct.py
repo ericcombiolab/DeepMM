@@ -147,7 +147,7 @@ def correct(options):
     breakcontigs = df.loc[df['Chimeric_Prediction'] > score_cut,]
     breakcontigs = breakcontigs.loc[breakcontigs['Chimeric_BreakPoint'] > config['min_split_length'], ]
     breakcontigs = breakcontigs.loc[(breakcontigs['Length'] - breakcontigs['Chimeric_BreakPoint']) > config['min_split_length'], ]
-    breakcontigs = list(np.unique(breakcontigs['contig']))
+    breakcontigs = list(np.unique(breakcontigs['Assembly']))
     
     with open(corrected_contig_file, "w") as corrected_file:
         for record in tqdm(input_file, desc = f'Correting ... '):
