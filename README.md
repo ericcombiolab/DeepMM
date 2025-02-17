@@ -89,7 +89,7 @@ DeepMM correct --folder_path ./example/final.contigs.fa \
 ```
 The output is under `./example/deepmm_output`
 
-## Fine-tuning on new datasets (Highly recommand)
+## Fine-tuning on new datasets (Highly recommend)
 As reads from different sequencers have slight differernt, which may effect model performance. We highly recommand you fine-tuning model though cause some time, but worth to do.
 ### Software
 - [MGSIM](https://github.com/nick-youngblut/MGSIM)
