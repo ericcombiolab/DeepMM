@@ -87,17 +87,14 @@ def df_difference_nor(features_npy):
     
     #* Insert size refilled
     diff_mask = ~np.logical_and(is_non_zero_mask, dp_non_zero_mask)
-    # 遍历 features_npy[3] 数组,填充不重合位置的值
     for i in range(len(features_npy[3])):
         if diff_mask[i]:
-            # 找到最近的左边第一个非零值
             j = i - 1
             while j >= 0 and features_npy[3][j] == 0:
                 j -= 1
             if j >= 0:
                 features_npy[3][i] = features_npy[3][j]
             else:
-                # 找不到左边的非零值,则找右边的非零值
                 j = i + 1
                 while j < len(features_npy[3]) and features_npy[3][j] == 0:
                     j += 1
@@ -124,48 +121,6 @@ def df_difference_nor(features_npy):
     feature_maps = [np.diag(features_npy[i]) for i in range(len(features_npy))]
     feature_maps.append(dp_diff_feature_map)
     return feature_maps
-
-def extract_contig_info(file_path):
-    negative_contig = {}
-    positive_contig = {}
-    mis_type = ['relocation', 'inversion', 'interspecies', 'translocation']
-    with open(file_path, 'r') as file:
-        lines = file.readlines()
-        for i, line in enumerate(lines):
-            content = line.strip('\n').split('\t')
-            if 'CONTIG' in content and ('correct' in content or 'misassembled' in content):
-                contig_name = content[1]
-                contig_len = int(content[2])
-                mapping_percentage = float(lines[i-1].strip('\n').split('\t')[6]) 
-                if (content[-1] == 'correct' or content[-1] == 'correct_unaligned') and 'local misassembly' not in lines[i-2] and mapping_percentage >= 100 and 'CONTIG' in lines[i-2]:
-                    negative_contig[contig_name] = {'contig_len': contig_len}
-                elif content[-1] == 'misassembled' or 'local misassembly' in lines[i-2]:
-                    point = []
-                    k = 1
-                    while True:
-                        if 'CONTIG' in lines[i - k]:
-                            break
-                        else:
-                            if contig_name in lines[i - k]:
-                                if lines[i-k].strip('\n').split('\t')[-1] == 'True':
-                                    point.extend([int(lines[i-k].strip('\n').split('\t')[2]), int(lines[i-k].strip('\n').split('\t')[3])])
-                        k += 1
-                    point = [x for x in point if x != 1 and x != contig_len]
-                    point.sort()
-                    arr = np.array(point)
-                    diff = np.diff(arr)
-                    mask = np.concatenate(([True], np.abs(diff) != 1))
-                    result = list(set(arr[mask]))
-                    result.sort()
-                    if content[-1] == 'misassembled':
-                        k = 2
-                        while True:
-                            mis_info = lines[i - k].split()[0].replace(',', '')
-                            if mis_info in mis_type:
-                                positive_contig[contig_name] = {'break_point': result, 'contig_len': contig_len, 'mis_type': mis_info}
-                                break
-                            k += 2
-    return negative_contig, positive_contig
 
 class Pretrain_FeatureDataset(Dataset):
     def __init__(self, path):
