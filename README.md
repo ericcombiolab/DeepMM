@@ -206,7 +206,7 @@ wget -P ./pretrain-model-weight https://zenodo.org/records/14863005/files/checkP
 ```
 DeepMM finetune --epochs 50 \
                 --batch_size 256 \
-                --lr 0.0001 \
+                --lr 0.001 \
                 --gpu_device cuda:0 \
                 --clip 1 \
                 --weight_decay 0.0001 \
