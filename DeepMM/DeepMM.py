@@ -54,7 +54,7 @@ def get_opts(options):
     fine_tune.add_argument('--weight_decay', type=float, default=0.0001)
     fine_tune.add_argument('--checkPoint_path', type=str, default=f'./fine-tune-model-weight')
     fine_tune.add_argument('--pretrain_model_path', type=str, default=f'./pretrain-model-weight/checkpoint.pt')
-    fine_tune.add_argument('--finetune_dataset_path', type=str, default=f'')
+    fine_tune.add_argument('--fine_tune_dataset_path', type=str, default=f'')
 
     pretrain_data = subparsers.add_parser('pretrain_data', help='Generate pretrain dataset')
     pretrain_data.add_argument('--data_folder', type=str, default = '')
