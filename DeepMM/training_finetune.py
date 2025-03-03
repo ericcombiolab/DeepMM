@@ -10,6 +10,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 import sklearn.metrics as sm
+import logging
 
 from .tools import * 
 from .model import *
@@ -53,7 +54,7 @@ class Trainer():
 
         y_1_smooth = interp_func_1(x_smooth)
         y_2_smooth = interp_func_2(x_smooth)
-        mkdir(figure_path)
+        os.makedirs(figure_path, exist_ok=True)
         plt.xlabel("epochs")
         plt.plot(x_smooth, y_1_smooth, color = 'red', label = 'train loss')
         plt.plot(x_smooth, y_2_smooth, color = 'blue', label = 'evaluate loss')
@@ -72,7 +73,7 @@ class Trainer():
 
         y_1_smooth = interp_func_1(x_smooth)
         y_2_smooth = interp_func_2(x_smooth)
-        mkdir(figure_path)
+        os.makedirs(figure_path, exist_ok=True)
         plt.xlabel("epochs")
         plt.plot(x_smooth, y_1_smooth, color = 'red', label = 'train acc')
         plt.plot(x_smooth, y_2_smooth, color = 'blue', label = 'evaluate acc')
@@ -101,7 +102,7 @@ class Trainer():
         for _, features, labels in train_dataloader:
             self.optimizer.zero_grad()
             batch_count += 1
-            features, labels = features.cuda(sr_training_config['device']), labels.cuda(sr_training_config['device'])
+            features, labels = features.cuda(self.device), labels.cuda(self.device)
             
             emb, predictions = self.model(features)
             loss = self.criterion(predictions, labels)
@@ -123,7 +124,7 @@ class Trainer():
         with torch.no_grad():
             for _, features, labels in eval_dataloader:
                 batch_count += 1
-                features, labels = features.cuda(sr_training_config['device']), labels.cuda(sr_training_config['device'])
+                features, labels = features.cuda(self.device), labels.cuda(self.device)
                 emb, predictions = self.model(features)
                 loss = self.criterion(predictions, labels)
                 epoch_loss += loss.item()
@@ -140,7 +141,7 @@ class Trainer():
 
         with torch.no_grad():
             for _, features, labels in dataloader:
-                features = features.cuda(sr_training_config['device'])
+                features = features.cuda(self.device)
                 emb, predictions = self.model(features)
                 predictions = predictions.cpu()
                 true_label.extend(torch.argmax(labels, dim=1)) 
@@ -190,9 +191,9 @@ class Trainer():
             self.scheduler.step()
 
         torch.cuda.empty_cache()
-        self.training_figure(self.checkPoint_path, x_epochs, y_train_loss, y_eval_loss, sr_config['window_len'])
+        self.training_figure(self.checkPoint_path, x_epochs, y_train_loss, y_eval_loss, config['window_len'])
         plt.clf()
-        self.acc_figure(self.checkPoint_path, x_epochs, y_train_acc, y_eval_acc, sr_config['window_len'])
+        self.acc_figure(self.checkPoint_path, x_epochs, y_train_acc, y_eval_acc, config['window_len'])
         plt.clf()
 
 def finetune(args):
