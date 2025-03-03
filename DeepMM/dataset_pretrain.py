@@ -52,12 +52,12 @@ def balance_sample(folder_path):
     print(f"Final Negative samples: {len(ne_file)}")
 
 
-def get_views_feature(ori_point, comm_type, comm, contig_name, contig_seq, read_infos, align_path, folder_path):
+def get_views_feature(ori_point, comm_type, comm, contig_name, contig_seq, read_infos, is_avg, align_path, folder_path):
     random_number = random.random()
     #* Left shift
     pick_point = int(ori_point - (config['window_len'] / 2) * random_number)
     window_name = f"{comm_type}_comm_{comm}_{contig_name}_{pick_point}"
-    window_feature, multiple_transloc, zero_fea, _ = get_feature(pick_point, contig_seq, read_infos, config['window_len'], align_path)
+    window_feature, multiple_transloc, zero_fea, window_ts, window_bp = get_feature(point = pick_point, contig_seq=contig_seq, read_infos = read_infos, window_len = config['window_len'], is_avg=is_avg, align_path = align_path)
     if not multiple_transloc and not zero_fea:
         feature_file = os.path.join(folder_path, f'{window_name}_fw.npy')
         np.save(feature_file, window_feature)
@@ -65,7 +65,7 @@ def get_views_feature(ori_point, comm_type, comm, contig_name, contig_seq, read_
     #* Right shift
     pick_point = int(ori_point + (config['window_len'] / 2) * random_number)
     window_name = f"{comm_type}_comm_{comm}_{contig_name}_{pick_point}"
-    window_feature, multiple_transloc, zero_fea, _ = get_feature(pick_point, contig_seq, read_infos, config['window_len'], align_path)
+    window_feature, multiple_transloc, zero_fea, window_ts, window_bp = get_feature(point = pick_point, contig_seq=contig_seq, read_infos = read_infos, window_len = config['window_len'], is_avg=is_avg, align_path = align_path)
     if not multiple_transloc and not zero_fea:
         feature_file = os.path.join(folder_path, f'{window_name}_bw.npy')
         np.save(feature_file, window_feature)
@@ -78,13 +78,13 @@ def get_views_feature(ori_point, comm_type, comm, contig_name, contig_seq, read_
         sub_ratio = random.uniform(0.6, 1)
         sub_sample_reads = random.sample(read_infos, int(aligned_reads_count *  sub_ratio))
         window_name = f"{comm_type}_comm_{comm}_{contig_name}_{pick_point}"
-        window_feature, multiple_transloc, zero_fea, _ = get_feature(pick_point, contig_seq, sub_sample_reads, config['window_len'], align_path)
+        window_feature, multiple_transloc, zero_fea, window_ts, window_bp = get_feature(point = pick_point, contig_seq=contig_seq, read_infos = read_infos, window_len = config['window_len'], is_avg=is_avg, align_path = align_path)
         if not multiple_transloc and not zero_fea and all(window_feature[-1] > 0):
             feature_file = os.path.join(folder_path, f'{window_name}_sub.npy')
             np.save(feature_file, window_feature)
     else:
         window_name = f"{comm_type}_comm_{comm}_{contig_name}_{pick_point}"
-        window_feature, multiple_transloc, zero_fea, _ = get_feature(pick_point, contig_seq, read_infos, config['window_len'], align_path)
+        window_feature, multiple_transloc, zero_fea, window_ts, window_bp = get_feature(point = pick_point, contig_seq=contig_seq, read_infos = read_infos, window_len = config['window_len'], is_avg=is_avg, align_path = align_path)
         if not multiple_transloc and not zero_fea:
             feature_file = os.path.join(folder_path, f'{window_name}_sub.npy')
             np.save(feature_file, window_feature)
@@ -94,8 +94,8 @@ def check_and_remove_folder(folder_path):
     if len(files) != config['n_views']:
         shutil.rmtree(folder_path)
 
-def multi_view_collect(feature_folder, comm_type, comm, contig_name, label, align_path, pick_point, contig_seq, read_infos):
-    window_feature, multiple_transloc, zero_fea, _ = get_feature(pick_point, contig_seq, read_infos, config['window_len'], align_path)
+def multi_view_collect(feature_folder, comm_type, comm, contig_name, label, align_path, pick_point, contig_seq, read_infos, is_avg):
+    window_feature, multiple_transloc, zero_fea, window_ts, window_bp = get_feature(point = pick_point, contig_seq=contig_seq, read_infos = read_infos, window_len = config['window_len'], is_avg=is_avg, align_path = align_path)
     if not multiple_transloc and not zero_fea:
         window_name = f"{comm_type}_comm_{comm}_{contig_name}_{pick_point}"
         folder_path = f'{feature_folder}/{window_name}_{label}'
@@ -112,7 +112,7 @@ def multi_view_collect(feature_folder, comm_type, comm, contig_name, label, alig
         window_feature_reversed = np.array(window_feature_reversed)
         feature_file = os.path.join(folder_path, f'{window_name}_re.npy')
         np.save(feature_file, window_feature_reversed)
-        get_views_feature(pick_point, comm_type, comm, contig_name, contig_seq, read_infos, align_path, folder_path)
+        get_views_feature(pick_point, comm_type, comm, contig_name, contig_seq, read_infos, is_avg, align_path, folder_path)
         check_and_remove_folder(folder_path)
 
 def get_positive_window(feature_folder, proper_bp_contig_names, contig_path, align_path, positive_contig, comm, comm_type):
@@ -124,6 +124,7 @@ def get_positive_window(feature_folder, proper_bp_contig_names, contig_path, ali
                 if aligned_reads_count >= 10:
                     contig_len = len(contig_seq)
                     skip_len = config['skip_perc'] * contig_len if config['skip_perc'] * contig_len < 1000 else 1000
+                    is_avg = get_is_avg(read_infos, contig_seq)
                     for label_point in positive_contig[contig_name]['break_point']:
                         #* pick proper break point label
                         if skip_len + config['window_len'] / 2 <= label_point < contig_len - skip_len - config['window_len'] / 2:
@@ -131,15 +132,15 @@ def get_positive_window(feature_folder, proper_bp_contig_names, contig_path, ali
                             label = 1
                             #* Left shift
                             pick_point = int(label_point - (config['window_len'] / 2) * random_number)
-                            multi_view_collect(feature_folder, comm_type, comm, contig_name, label, align_path, pick_point, contig_seq, read_infos)
+                            multi_view_collect(feature_folder, comm_type, comm, contig_name, label, align_path, pick_point, contig_seq, read_infos, is_avg)
 
                             #* Middel
                             pick_point = int(label_point)
-                            multi_view_collect(feature_folder, comm_type, comm, contig_name, label, align_path, pick_point, contig_seq, read_infos)
+                            multi_view_collect(feature_folder, comm_type, comm, contig_name, label, align_path, pick_point, contig_seq, read_infos, is_avg)
                             
                             #* Right shift
                             pick_point = int(label_point + (config['window_len'] / 2) * random_number)
-                            multi_view_collect(feature_folder, comm_type, comm, contig_name, label, align_path, pick_point, contig_seq, read_infos)
+                            multi_view_collect(feature_folder, comm_type, comm, contig_name, label, align_path, pick_point, contig_seq, read_infos, is_avg)
                             
 
 def get_negative_window(feature_folder, negative_contig_names, contig_path, align_path, comm, comm_type):
@@ -151,10 +152,11 @@ def get_negative_window(feature_folder, negative_contig_names, contig_path, alig
                 if aligned_reads_count >= 10:
                     contig_len = len(contig_seq)
                     skip_len = config['skip_perc'] * contig_len if config['skip_perc'] * contig_len < 1000 else 1000
+                    is_avg = get_is_avg(read_infos, contig_seq)
                     #* Forward 
                     for pick_point in range(int(skip_len + config['window_len'] / 2), int(contig_len - skip_len - config['window_len'] / 2), config['window_len']):
                         label = 0
-                        multi_view_collect(feature_folder, comm_type, comm, contig_name, label, align_path, pick_point, contig_seq, read_infos)
+                        multi_view_collect(feature_folder, comm_type, comm, contig_name, label, align_path, pick_point, contig_seq, read_infos, is_avg)
                         
 def get_pretrain_data(args):
     data_folder = args.data_folder
