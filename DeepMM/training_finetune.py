@@ -17,7 +17,7 @@ from .model import *
 
 class Trainer():
     def __init__(self, model: nn.Module, args):
-
+        
         self.epochs = args.epochs
         self.batch_size = args.batch_size
         self.lr = args.lr
@@ -162,7 +162,7 @@ class Trainer():
         y_train_acc = []
         y_eval_acc = []
         os.makedirs(self.checkPoint_path, exist_ok=True)
-        logging.basicConfig(filename=f'{self.args.checkPoint_path}/fine-tuneing.log', level=logging.INFO,
+        logging.basicConfig(filename=f'{self.checkPoint_path}/fine-tuneing.log', level=logging.INFO,
             format='%(asctime)s - %(levelname)s - %(message)s')
 
         for epoch in range(self.epochs):
@@ -197,9 +197,9 @@ class Trainer():
         plt.clf()
 
 def finetune(args):
-    fine_tune_dataset_path = args.fine_tune_dataset_path
-    training_dataset = EvalDataset(fine_tune_dataset_path,'train')
-    evaluating_dataset = EvalDataset(fine_tune_dataset_path, 'eval')
+    finetune_dataset_path = args.finetune_dataset_path
+    training_dataset = EvalDataset(finetune_dataset_path,'train')
+    evaluating_dataset = EvalDataset(finetune_dataset_path, 'eval')
 
     model = LinearEvaluation(ResNetSimCLR(base_model='resnet50', out_dim=128))
     model_path = args.pretrain_model_path
