@@ -1,6 +1,8 @@
 import os
 import random
 
+import logging
+from tqdm import tqdm
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.interpolate import make_interp_spline
@@ -10,7 +12,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 import sklearn.metrics as sm
-import logging
+
 
 from .tools import * 
 from .model import *
