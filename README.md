@@ -89,8 +89,8 @@ DeepMM correct --folder_path ./example/final.contigs.fa \
 ```
 The output is under `./example/deepmm_output`
 
-## Fine-tuning on new datasets (Highly recommend)
-As reads from different sequencers have slight differernt, which may effect model performance. We highly recommand you fine-tuning model though cause some time, but worth to do.
+## Supervised Fine-Tuning on new datasets (Highly recommend)
+As reads from different sequencers have slight differernt, which may effect model performance. We highly recommand you fine-tuning model though cause some time, but worth to do. Only one community dataset could finish SFT.
 ### Software
 - [MGSIM](https://github.com/nick-youngblut/MGSIM)
 - [MEGAHIT](https://github.com/voutcn/megahit) or [metaSPAdes](https://github.com/ablab/spades)
@@ -112,7 +112,7 @@ error_profile_R2.txt
 ```
 ### Fine-tune Dataset simulation
 ```
-comm_num=30
+comm_num=1
 
 mkdir -p  ./simulation/communities
 
