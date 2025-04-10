@@ -226,7 +226,7 @@ DeepMM pretrain_data --data_folder /path/to/data \
 ```
 
 ```
- DeepMM pretrain_data --pretrain_dataset_path './data' \
+ DeepMM pretrain --pretrain_dataset_path './data' \
                       --epochs 50 \
                       --batch-size 128 \
                       --lr 0.0003 \
