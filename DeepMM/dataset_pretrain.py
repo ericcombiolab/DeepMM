@@ -84,7 +84,7 @@ def get_views_feature(ori_point, comm_type, comm, contig_name, contig_seq, read_
         if all(window_is_avg > 0):
             window_name = f"{comm_type}_comm_{comm}_{contig_name}_{pick_point}"
             window_feature, multiple_transloc, zero_fea, window_ts, window_bp = get_feature(point = pick_point, contig_seq=contig_seq, read_infos = read_infos, window_len = config['window_len'], is_avg=is_avg, align_path = align_path)
-            if not multiple_transloc and not zero_fea and :
+            if not multiple_transloc and not zero_fea:
                 feature_file = os.path.join(folder_path, f'{window_name}_sub.npy')
                 np.save(feature_file, window_feature)
     else:
