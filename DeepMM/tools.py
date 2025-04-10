@@ -133,8 +133,8 @@ def extract_contig_info(file_path):
             if 'CONTIG' in content and ('correct' in content or 'misassembled' in content):
                 contig_name = content[1]
                 contig_len = int(content[2])
-                mapping_percentage = float(lines[i-1].strip('\n').split('\t')[6]) 
-                if (content[-1] == 'correct' or content[-1] == 'correct_unaligned') and 'local misassembly' not in lines[i-2] and mapping_percentage >= 100 and 'CONTIG' in lines[i-2]:
+                mapping_percentage = float(lines[i-1].strip('\n').split('\t')[6])
+                if (content[-1] == 'correct' or content[-1] == 'correct_unaligned') and 'local misassembly' not in lines[i-2] and mapping_percentage >= 98 and 'CONTIG' in lines[i-2]:
                     negative_contig[contig_name] = {'contig_len': contig_len}
                 elif content[-1] == 'misassembled' or 'local misassembly' in lines[i-2]:
                     point = []
