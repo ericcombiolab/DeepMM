@@ -176,9 +176,9 @@ def get_pretrain_data(args):
             negative_contig, positive_contig = extract_contig_info(label_path)
 
             # get contig length between min and max
-            negative_contig_names = [contig_name for contig_name in negative_contig.keys() if config['min_contig_len'] <= negative_contig[contig_name]['contig_len'] < config['max_contig_len']]
+            negative_contig_names = [contig_name for contig_name in negative_contig.keys() if config['min_contig_length'] <= negative_contig[contig_name]['contig_len'] < config['max_contig_length']]
             # get positve contig between min and max length
-            positive_contig_names = [contig_name for contig_name in positive_contig.keys() if  config['min_contig_len'] <= positive_contig[contig_name]['contig_len'] < config['max_contig_len']]
+            positive_contig_names = [contig_name for contig_name in positive_contig.keys() if  config['min_contig_length'] <= positive_contig[contig_name]['contig_len'] < config['max_contig_length']]
             # divide into training set and evaluating set
             
             po_pre_train_end = int(0.8 * len(positive_contig_names))
@@ -186,6 +186,10 @@ def get_pretrain_data(args):
 
             positive_contig_names = positive_contig_names[:po_pre_train_end]
             negative_contig_names = negative_contig_names[:ne_pre_train_end]
+
+            #! Bug test
+            # get_positive_window(feature_folder, positive_contig_names, contig_path, align_path, positive_contig, comm, comm_type)
+            # get_negative_window(feature_folder, negative_contig_names, contig_path, align_path, comm, comm_type)
 
             max_connections = threading.Semaphore(2)
             po_result = pool.apply_async(get_positive_window, (feature_folder, positive_contig_names, contig_path, align_path, positive_contig, comm, comm_type))
