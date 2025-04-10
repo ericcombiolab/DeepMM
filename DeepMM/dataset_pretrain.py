@@ -77,11 +77,16 @@ def get_views_feature(ori_point, comm_type, comm, contig_name, contig_seq, read_
     if fold > 20:
         sub_ratio = random.uniform(0.6, 1)
         sub_sample_reads = random.sample(read_infos, int(aligned_reads_count *  sub_ratio))
-        window_name = f"{comm_type}_comm_{comm}_{contig_name}_{pick_point}"
-        window_feature, multiple_transloc, zero_fea, window_ts, window_bp = get_feature(point = pick_point, contig_seq=contig_seq, read_infos = read_infos, window_len = config['window_len'], is_avg=is_avg, align_path = align_path)
-        if not multiple_transloc and not zero_fea and all(window_feature[-1] > 0):
-            feature_file = os.path.join(folder_path, f'{window_name}_sub.npy')
-            np.save(feature_file, window_feature)
+        is_avg = get_is_avg(sub_sample_reads, contig_seq)
+        b_window = int(pick_point - (config['window_len'] / 2))
+        e_window = b_window + config['window_len']
+        window_is_avg = is_avg[b_window: e_window]
+        if all(window_is_avg > 0):
+            window_name = f"{comm_type}_comm_{comm}_{contig_name}_{pick_point}"
+            window_feature, multiple_transloc, zero_fea, window_ts, window_bp = get_feature(point = pick_point, contig_seq=contig_seq, read_infos = read_infos, window_len = config['window_len'], is_avg=is_avg, align_path = align_path)
+            if not multiple_transloc and not zero_fea and :
+                feature_file = os.path.join(folder_path, f'{window_name}_sub.npy')
+                np.save(feature_file, window_feature)
     else:
         window_name = f"{comm_type}_comm_{comm}_{contig_name}_{pick_point}"
         window_feature, multiple_transloc, zero_fea, window_ts, window_bp = get_feature(point = pick_point, contig_seq=contig_seq, read_infos = read_infos, window_len = config['window_len'], is_avg=is_avg, align_path = align_path)
