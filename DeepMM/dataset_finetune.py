@@ -157,6 +157,9 @@ def get_training_data(args, status):
     balance_sample(folder_path = f'{feature_folder}/{status}')
 
 def get_fine_tune_dataset(args):
-    get_training_data(args, 'train')
-    get_training_data(args, 'eval')
+    if not args.eval_only:
+        get_training_data(args, 'train')
+        get_training_data(args, 'eval')
+    else:
+        get_training_data(args, 'eval')
 
