@@ -30,7 +30,8 @@ def get_opts(options):
     correct.add_argument('--gpu_device', default='cuda:0', help='GPU device id')
 
     pretrain = subparsers.add_parser('pretrain', help='Pretrain model')
-    pretrain.add_argument('--pretrain_dataset_path', metavar='DIR', default='', help='path to dataset')
+    pretrain.add_argument('--eval_dataset_path', metavar='DIR', default='', help='path to eavl dataset')
+    pretrain.add_argument('--pretrain_dataset_path', metavar='DIR', default='', help='path to pretrain dataset')
     pretrain.add_argument('-a', '--arch', metavar='ARCH', default='resnet50', help='model architecture: resnet18 | resnet 50 (default: resnet50)')
     pretrain.add_argument('-j', '--workers', default=32, type=int, metavar='N', help='number of data loading workers (default: 32)')
     pretrain.add_argument('--epochs', default=100, type=int, metavar='N', help='number of total epochs to run')
@@ -71,6 +72,7 @@ def get_opts(options):
     finetune_data.add_argument('--label', type=str, default='all_alignments_final-contigs.tsv')
     finetune_data.add_argument('--assembly', type=str, default='final.contigs.fa')
     finetune_data.add_argument('--alignment', type=str, default='sort.bam')
+    finetune_data.add_argument('--eval_only', type=str, default=False)
 
     if not options:
         parser.print_help(sys.stderr)
