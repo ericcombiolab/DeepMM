@@ -252,9 +252,10 @@ class TrainingProcess():
 def pretrain(args):
     
     pretrain_dataset_path = args.pretrain_dataset_path
+    eval_dataset_path = args.eval_dataset_path
     
-    training_dataset = Pretrain_FeatureDataset('/home/datasets/Dy/DeepMIC/megahit_feature_self_supervised_v5')
-    evaluating_dataset = EvalDataset('/home/datasets/Dy/DeepMIC/megahit_feature_supervised_v3', 'eval')
+    training_dataset = Pretrain_FeatureDataset(pretrain_dataset_path)
+    evaluating_dataset = EvalDataset(eval_dataset_path)
 
 
     model = LinearEvaluation(ResNetSimCLR(base_model=args.arch, out_dim=args.out_dim))
