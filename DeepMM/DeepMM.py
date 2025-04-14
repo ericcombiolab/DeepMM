@@ -30,7 +30,7 @@ def get_opts(options):
     correct.add_argument('--gpu_device', default='cuda:0', help='GPU device id')
 
     pretrain = subparsers.add_parser('pretrain', help='Pretrain model')
-    parser.add_argument('--eval_dataset_path', metavar='DIR', default='', help='path to eavl dataset')
+    pretrain.add_argument('--eval_dataset_path', metavar='DIR', default='', help='path to eavl dataset')
     pretrain.add_argument('--pretrain_dataset_path', metavar='DIR', default='', help='path to dataset')
     pretrain.add_argument('-a', '--arch', metavar='ARCH', default='resnet50', help='model architecture: resnet18 | resnet 50 (default: resnet50)')
     pretrain.add_argument('-j', '--workers', default=32, type=int, metavar='N', help='number of data loading workers (default: 32)')
