@@ -288,6 +288,7 @@ Used to identify and correct misassemblies.
 Used to pretrain the model.
 
 ### Parameters:
+- `--eval_dataset_path` (str, metavar='DIR', default=''): Path to eavl dataset.
 - `--pretrain_dataset_path` (str, metavar='DIR', default=''): Path to dataset.
 - `-a`, `--arch` (str, metavar='ARCH', default='resnet50'): Model architecture: resnet18 | resnet50 (default: resnet50).
 - `-j`, `--workers` (int, default=32, metavar='N'): Number of data loading workers (default: 32).
