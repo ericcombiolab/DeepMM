@@ -226,12 +226,24 @@ DeepMM pretrain_data --data_folder /path/to/data \
 ```
 
 ```
- DeepMM pretrain --pretrain_dataset_path './data' \
-                      --epochs 50 \
-                      --batch-size 128 \
-                      --lr 0.0003 \
-                      --gpus 1 \ # Your number of GPUs
-                      --checkPoint_path ./pretiran-model-weight/checkpoint_path \
+ #!/bin/bash
+
+export OMP_NUM_THREADS=1
+export TORCH_DISTRIBUTED_DEBUG=DETAIL
+
+GPU_NUMBERS=4
+
+CUDA_VISIBLE_DEVICES=4,5,6,7 torchrun \
+        --nproc_per_node=$GPU_NUMBERS \
+        /home/comp/23482362/Project/DeepMM/DeepMM/training_pretrain.py \
+        --pretrain_dataset_path '/home/datasets/Dy/DeepMIC/megahit_pretrain_dataset' \
+        --eval_dataset_path '/home/datasets/Dy/DeepMIC/megahit_pretrian_eval' \
+        --epochs 50 \
+        --batch-size 64 \
+        --gpus $GPU_NUMBERS \
+        --lr 0.003 \
+        --checkPoint_path ./pretiran-model-weight
+
 ```
 
 
