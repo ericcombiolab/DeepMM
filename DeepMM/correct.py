@@ -1,5 +1,6 @@
 import os
 import random
+import subprocess
 import multiprocessing
 from functools import partial
 
@@ -72,17 +73,34 @@ def process_contig(contig_name, contig_path, align_path, model, device):
         'window_prediction': pred
     }
 
-def correct(options):
+def correct(args):
     
-    threads = options.threads
-    device = options.gpu_device
-    fine_tune = options.fine_tune
-    folder_path = options.folder_path
-    model_weight_path = options.model_weight_path
+    threads = args.threads
+    device = args.gpu_device
+    fine_tune = args.fine_tune
+    folder_path = args.folder_path
+    model_weight_path = args.model_weight_path
+    file_name = args.file_name
+    contig_file_name = args.contig_file_name
+    bam_file_name = args.bam_file_name
+    
 
     multiprocessing.set_start_method('spawn')
-    contig_path = os.path.join(folder_path, 'final.contigs.fa')
-    align_path = os.path.join(folder_path, 'sort.bam')
+    contig_path = os.path.join(folder_path, contig_file_name)
+    align_path = os.path.join(folder_path, bam_file_name)
+
+    contig_fai_path = f'{contig_path}.fai'
+    align_fai_path = f'{align_path}.bai'
+
+    touch_cmd = [
+        'touch', contig_fai_path
+    ]
+    subprocess.run(touch_cmd)
+    touch_cmd = [
+        'touch', align_fai_path
+    ]
+    subprocess.run(touch_cmd)
+
     output_folder_path = f'{folder_path}/deepmm_output'
     os.makedirs(output_folder_path, exist_ok=True)
     
@@ -122,7 +140,7 @@ def correct(options):
         if len(contig_test[contig_name]['bp_pred']) > 0:
             breakcontigs.append(contig_name)
             
-    with open(f'{output_folder_path}/assembly_prediction.tsv', 'w') as f:
+    with open(f'{output_folder_path}/{file_name}', 'w') as f:
         f.write('Assembly\tBreakPoint\tPrediction\tLength\tChimeric_BreakPoint\tChimeric_Prediction\n')
         for contig_name in total_contig_name:
             if contig_name in breakcontigs:
@@ -140,9 +158,9 @@ def correct(options):
                 f.write(contig_name + '\t' + '-1' + '\t' + str(contig_test[contig_name]['max_prediction']) + '\t' + str(contig_test[contig_name]['contig_len']) + '\t' + '-1' + '\t' + '0' + '\n')
 
     corrected_contig_file = os.path.join(output_folder_path, "corrected_contigs.fa")
-    original_file = f'{folder_path}/final.contigs.fa'
+    original_file = f'{folder_path}/{contig_file_name}'
     input_file = SeqIO.parse(original_file, "fasta")
-    df = pd.read_csv(f'{output_folder_path}/assembly_prediction.tsv', sep='\t')
+    df = pd.read_csv(f'{output_folder_path}/{file_name}', sep='\t')
     score_cut = config['threshold']
     breakcontigs = df.loc[df['Chimeric_Prediction'] > score_cut,]
     breakcontigs = breakcontigs.loc[breakcontigs['Chimeric_BreakPoint'] > config['min_split_length'], ]
