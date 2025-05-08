@@ -31,7 +31,7 @@ def get_opts(options):
     correct.add_argument('--file_name', default='assembly_prediction.tsv', help='Result file name')
     correct.add_argument('--contig_file_name', default='final.contigs.fa', help='Result file name')
     correct.add_argument('--bam_file_name', default='sort.bam', help='Result file name')
-    
+    correct.add_argument('--correct_all', action='store_true', help='Correct all misassemblies')
     
     fine_tune = subparsers.add_parser('finetune', help='Fine-tune model')
     fine_tune.add_argument('--epochs', type=int, default = 50)
