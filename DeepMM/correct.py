@@ -83,6 +83,7 @@ def correct(args):
     file_name = args.file_name
     contig_file_name = args.contig_file_name
     bam_file_name = args.bam_file_name
+    correct_all = args.correct_all
     
 
     multiprocessing.set_start_method('spawn')
@@ -162,15 +163,24 @@ def correct(args):
     input_file = SeqIO.parse(original_file, "fasta")
     df = pd.read_csv(f'{output_folder_path}/{file_name}', sep='\t')
     score_cut = config['threshold']
-    breakcontigs = df.loc[df['Chimeric_Prediction'] > score_cut,]
-    breakcontigs = breakcontigs.loc[breakcontigs['Chimeric_BreakPoint'] > config['min_split_length'], ]
-    breakcontigs = breakcontigs.loc[(breakcontigs['Length'] - breakcontigs['Chimeric_BreakPoint']) > config['min_split_length'], ]
-    breakcontigs = list(np.unique(breakcontigs['Assembly']))
+    if not correct_all:
+        breakcontigs = df.loc[df['Chimeric_Prediction'] > score_cut,]
+        breakcontigs = breakcontigs.loc[breakcontigs['Chimeric_BreakPoint'] > config['min_split_length'], ]
+        breakcontigs = breakcontigs.loc[(breakcontigs['Length'] - breakcontigs['Chimeric_BreakPoint']) > config['min_split_length'], ]
+        breakcontigs = list(np.unique(breakcontigs['Assembly']))
+    else:
+        breakcontigs = df.loc[df['Prediction'] > score_cut,]
+        breakcontigs = breakcontigs.loc[breakcontigs['BreakPoint'] > config['min_split_length'], ]
+        breakcontigs = breakcontigs.loc[(breakcontigs['Length'] - breakcontigs['BreakPoint']) > config['min_split_length'], ]
+        breakcontigs = list(np.unique(breakcontigs['Assembly']))
     
     with open(corrected_contig_file, "w") as corrected_file:
         for record in tqdm(input_file, desc = f'Correting ... '):
             if record.id in breakcontigs:
-                bp = int(df.loc[df['Assembly'] == record.id, 'Chimeric_BreakPoint'].values[0])
+                if not correct_all:
+                    bp = int(df.loc[df['Assembly'] == record.id, 'Chimeric_BreakPoint'].values[0])
+                else:
+                    bp = int(df.loc[df['Assembly'] == record.id, 'BreakPoint'].values[0])
                 corrected_file.write(">" + record.id + "_1\n")
                 corrected_file.write(str(record.seq[:bp]) + "\n")
                 corrected_file.write(">" + record.id + "_2\n")
