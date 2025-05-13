@@ -12,11 +12,11 @@ def get_window_features(point, contig_seq, read_infos, window_len, align_path):
     b_window = int(point - (window_len / 2))
     e_window = b_window + window_len
     
-    window_cl = np.zeros([window_len]).astype(np.float64)
-    window_iv = np.zeros([window_len]).astype(np.float64)
-    window_ts = np.zeros([window_len]).astype(np.float64)
-    window_dp = np.zeros([window_len]).astype(np.float64)
-    window_bp = np.zeros([window_len]).astype(np.float64)
+    window_cl = np.zeros([window_len]).astype(np.float32)
+    window_iv = np.zeros([window_len]).astype(np.float32)
+    window_ts = np.zeros([window_len]).astype(np.float32)
+    window_dp = np.zeros([window_len]).astype(np.float32)
+    window_bp = np.zeros([window_len]).astype(np.float32)
 
     transloc_contig = [] 
     transloc_read_loc = []
@@ -65,7 +65,6 @@ def get_window_features(point, contig_seq, read_infos, window_len, align_path):
                         window_bp[break_point] += 1
                         window_cl[align_s: align_e] +=  (read_info.query_length - read_info.query_alignment_length) / read_info.query_length
                         
-
             if 0 < read_info.get_cigar_stats()[0][4]:
                 numbers = re.findall(r'\d+(?=S)', read_info.cigarstring)
                 clipped_len = [int(num) for num in numbers]
@@ -96,7 +95,7 @@ def get_window_features(point, contig_seq, read_infos, window_len, align_path):
             window_dp[align_s: align_e] += 1
             window_ts[align_s: align_e] += 1
 
-    window_cl[window_cl == 1] = 0
+    window_cl[np.where(window_bp == 1)[0]] = 0
     window_ts[window_ts == 1] = 0
     window_iv[window_iv == 1] = 0
     return window_cl, window_iv, window_ts, window_dp, multiple_transloc, window_bp
