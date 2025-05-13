@@ -37,9 +37,9 @@ def process_contig(contig_name, contig_path, align_path, model, device):
     contig_len = len(contig_seq)
     if len(read_infos) >= 10:
         skip_len = config['skip_perc'] * contig_len if config['skip_perc'] * contig_len < 1000 else 1000
-        is_avg = get_is_avg(read_infos, contig_seq)
+        is_avg, filtered_readInofs = get_is_avg(read_infos, contig_seq)
         for point in range(int(skip_len + 0.5 * config['window_len'] ), int(contig_len - skip_len - 0.5 * config['window_len']), config['window_len']):
-            window_feature, multiple_transloc, zero_fea, window_ts, window_bp = get_feature(point = point, contig_seq=contig_seq, read_infos = read_infos, window_len = config['window_len'], is_avg=is_avg, align_path = align_path)
+            window_feature, multiple_transloc, zero_fea, window_ts, window_bp = get_feature(point = point, contig_seq=contig_seq, read_infos = filtered_readInofs, window_len = config['window_len'], is_avg=is_avg, align_path = align_path)
             if not multiple_transloc and not zero_fea:
                 max_bp =  int(point - (config['window_len'] / 2)) + np.argmax(window_bp) if max(window_bp) > 0 else point
                 feature_maps = df_difference_nor(window_feature)
@@ -164,11 +164,13 @@ def correct(args):
     df = pd.read_csv(f'{output_folder_path}/{file_name}', sep='\t')
     score_cut = config['threshold']
     if not correct_all:
+        print('Correcting chimeric misassembly')
         breakcontigs = df.loc[df['Chimeric_Prediction'] > score_cut,]
         breakcontigs = breakcontigs.loc[breakcontigs['Chimeric_BreakPoint'] > config['min_split_length'], ]
         breakcontigs = breakcontigs.loc[(breakcontigs['Length'] - breakcontigs['Chimeric_BreakPoint']) > config['min_split_length'], ]
         breakcontigs = list(np.unique(breakcontigs['Assembly']))
     else:
+        print('Correcting all misassemblies')
         breakcontigs = df.loc[df['Prediction'] > score_cut,]
         breakcontigs = breakcontigs.loc[breakcontigs['BreakPoint'] > config['min_split_length'], ]
         breakcontigs = breakcontigs.loc[(breakcontigs['Length'] - breakcontigs['BreakPoint']) > config['min_split_length'], ]
