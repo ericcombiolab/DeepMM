@@ -48,33 +48,41 @@ def metrics_cal(TP, TN, FN, FP):
 def get_is_avg(read_infos, contig_seq):
     contig_is = {i: [] for i in range(len(contig_seq))}
     pool={}
+    filtered_readInofs = []
+    filterd_query = []
     for read_info in read_infos:
         if  read_info.mate_is_mapped and read_info.reference_name == read_info.next_reference_name:
             #* Insert size
             if read_info.query_name in pool and pool[read_info.query_name]['contig_name'] == read_info.reference_name:
                 mate_read = pool[read_info.query_name]
-                pe_s = min(read_info.reference_start, mate_read['read_s']) 
-                pe_e = max(read_info.reference_end, mate_read['read_e'])
-                size = pe_e - pe_s
-                mid_s = max(read_info.reference_start, mate_read['read_s'])
-                mid_e = min(read_info.reference_end, mate_read['read_e'])
-                if mid_s < mid_e:
-                    for i in range(read_info.reference_start, read_info.reference_end):
-                        contig_is[i].append(size)
-                    for i in range(mate_read['read_s'],  mate_read['read_e']):
-                        contig_is[i].append(size)
+                if read_info.reference_start == mate_read['read_s']:
+                    filterd_query.append(read_info.query_name)
                 else:
-                    for i in range(pe_s, pe_e):
-                        contig_is[i].append(size)
+                    pe_s = min(read_info.reference_start, mate_read['read_s']) 
+                    pe_e = max(read_info.reference_end, mate_read['read_e'])
+                    size = pe_e - pe_s
+                    mid_s = max(read_info.reference_start, mate_read['read_s'])
+                    mid_e = min(read_info.reference_end, mate_read['read_e'])
+                    if mid_s < mid_e:
+                        for i in range(read_info.reference_start, read_info.reference_end):
+                            contig_is[i].append(size)
+                        for i in range(mate_read['read_s'],  mate_read['read_e']):
+                            contig_is[i].append(size)
+                    else:
+                        for i in range(pe_s, pe_e):
+                            contig_is[i].append(size)
             else:
                 pool[read_info.query_name] = {
                     'contig_name': read_info.reference_name,
                     'read_s': read_info.reference_start,
                     'read_e': read_info.reference_end
                 }
-    
-    is_avg = np.array([statistics.mean(values) if len(values) > 0 else 0 for values in contig_is.values()])
-    return is_avg
+    filtered_readInofs = [read_info for read_info in read_infos if read_info.query_name not in filterd_query]
+    try:
+        is_avg = np.array([statistics.mean(values) if len(values) > 0 else 0 for values in contig_is.values()])
+    except Exception as e:
+        pass
+    return is_avg, filtered_readInofs
 
 def df_difference_nor(features_npy):
     dp_non_zero_mask = features_npy[4] != 0
@@ -106,8 +114,11 @@ def df_difference_nor(features_npy):
     #* Insert size standardization
     is_non_zero_mask = features_npy[3] != 0
     non_zero_values = features_npy[3][is_non_zero_mask]
-    mean = np.mean(non_zero_values)
-    std_dev = np.std(non_zero_values)
+    try:
+        mean = np.mean(non_zero_values)
+        std_dev = np.std(non_zero_values)
+    except Exception as e:
+        pass
     
     if std_dev == 0:
         features_npy[3] = features_npy[3] * 0
