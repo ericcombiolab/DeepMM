@@ -84,6 +84,7 @@ def correct(args):
     contig_file_name = args.contig_file_name
     bam_file_name = args.bam_file_name
     correct_all = args.correct_all
+    score_cut = args.threshold
     
 
     multiprocessing.set_start_method('spawn')
@@ -162,7 +163,7 @@ def correct(args):
     original_file = f'{folder_path}/{contig_file_name}'
     input_file = SeqIO.parse(original_file, "fasta")
     df = pd.read_csv(f'{output_folder_path}/{file_name}', sep='\t')
-    score_cut = config['threshold']
+    
     if not correct_all:
         print('Correcting chimeric misassembly')
         breakcontigs = df.loc[df['Chimeric_Prediction'] > score_cut,]
