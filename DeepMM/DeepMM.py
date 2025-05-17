@@ -3,10 +3,6 @@ import argparse
 import logging
 import warnings
 
-from datetime import datetime
-now = datetime.now()
-formatted_time = now.strftime("%Y_%m_%d_%H_%M")
-
 from .dataset_finetune import *
 from .dataset_pretrain import *
 from .training_finetune import *
