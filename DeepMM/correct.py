@@ -26,19 +26,20 @@ torch.cuda.manual_seed_all(42)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
-def process_contig(contig_name, contig_file, align_file, model, device):
+def process_contig(contig_name, contig_path, align_path, model, device):
     bp_pred = []
     point_pred = []
     pred = []
     chimeric_pred = []
-    
-    contig_seq, read_infos = get_contig_infos(contig_name, contig_file, align_file)
+    with pysam.FastaFile(contig_path) as contig_file:
+        with pysam.AlignmentFile(align_path) as align_file:
+            contig_seq, read_infos = get_contig_infos(contig_name, contig_file, align_file)
     contig_len = len(contig_seq)
     if len(read_infos) >= 10:
         skip_len = config['skip_perc'] * contig_len if config['skip_perc'] * contig_len < 1000 else 1000
         is_avg, filtered_readInofs = get_is_avg(read_infos, contig_seq)
         for point in range(int(skip_len + 0.5 * config['window_len'] ), int(contig_len - skip_len - 0.5 * config['window_len']), config['window_len']):
-            window_feature, multiple_transloc, zero_fea, window_ts, window_bp = get_feature(point = point, contig_seq=contig_seq, read_infos = filtered_readInofs, window_len = config['window_len'], is_avg=is_avg, align_file = align_file)
+            window_feature, multiple_transloc, zero_fea, window_ts, window_bp = get_feature(point = point, contig_seq=contig_seq, read_infos = filtered_readInofs, window_len = config['window_len'], is_avg=is_avg, align_path = align_path)
             if not multiple_transloc and not zero_fea:
                 max_bp =  int(point - (config['window_len'] / 2)) + np.argmax(window_bp) if max(window_bp) > 0 else point
                 feature_maps = df_difference_nor(window_feature)
@@ -120,22 +121,21 @@ def correct(args):
     contig_test = {}
     total_contig_name = []
     with pysam.FastaFile(contig_path) as contig_file:
-        with pysam.AlignmentFile(align_path) as align_file:
-            all_contig_names = contig_file.references
-            for contig_name in all_contig_names:
-                contig_seq = contig_file.fetch(contig_name)
-                if config['min_contig_length'] <= len(contig_seq) < config['max_contig_length']:
-                    total_contig_name.append(contig_name)
+        all_contig_names = contig_file.references
+        for contig_name in all_contig_names:
+            contig_seq = contig_file.fetch(contig_name)
+            if config['min_contig_length'] <= len(contig_seq) < config['max_contig_length']:
+                total_contig_name.append(contig_name)
 
-            process_contig_partial = partial(process_contig, contig_file=contig_file, align_file=align_file, model = model, device = device)
+    process_contig_partial = partial(process_contig, contig_path=contig_path, align_path=align_path, model = model, device = device)
 
-            with multiprocessing.Pool(processes=threads) as pool:
-                results = list(tqdm(pool.imap(process_contig_partial, total_contig_name), total=len(total_contig_name), desc='Predicting ...'))
+    with multiprocessing.Pool(processes=threads) as pool:
+        results = list(tqdm(pool.imap(process_contig_partial, total_contig_name), total=len(total_contig_name), desc='Predicting ...'))
 
-            contig_test = {result['contig_name']: {'bp_pred': result['bp_pred'], 'point_pred': result['point_pred'],
-                                                    'max_prediction': result['max_prediction'], 'contig_len': result['contig_len'],
-                                                    'chimeric_pred': result['chimeric_pred'], 'window_prediction': result['window_prediction']
-                                                    } for result in results}
+    contig_test = {result['contig_name']: {'bp_pred': result['bp_pred'], 'point_pred': result['point_pred'],
+                                            'max_prediction': result['max_prediction'], 'contig_len': result['contig_len'],
+                                            'chimeric_pred': result['chimeric_pred'], 'window_prediction': result['window_prediction']
+                                            } for result in results}
 
     breakcontigs = []
     for contig_name in contig_test.keys():
