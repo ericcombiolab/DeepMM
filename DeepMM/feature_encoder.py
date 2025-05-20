@@ -6,7 +6,7 @@ import numpy as np
 from .tools import *
 
 
-def get_window_features(point, contig_seq, read_infos, window_len, align_path):
+def get_window_features(point, contig_seq, read_infos, window_len, align_file):
     
     #* Initialize 
     b_window = int(point - (window_len / 2))
@@ -35,20 +35,18 @@ def get_window_features(point, contig_seq, read_infos, window_len, align_path):
             if read_info.mate_is_mapped and read_info.reference_name == read_info.next_reference_name:
                 if ((read_info.is_reverse and read_info.mate_is_reverse) or (read_info.is_forward and read_info.mate_is_forward)): 
                     window_iv[align_s: align_e] += 1
-
             #* Translocated read pair
             elif read_info.mate_is_mapped and  read_info.reference_name != read_info.next_reference_name and read_info.mapping_quality == 60:
-                with pysam.AlignmentFile(align_path, 'rb') as align_file:
-                    try:
-                        mate_info = align_file.mate(read_info)
-                        mate_contig_name = mate_info.reference_name
-                        mate_contig_length = align_file.get_reference_length(mate_contig_name)
-                        if mate_info.mapping_quality >= config['mapping_quality'] and (read_info.next_reference_start in range(0, 300) or read_info.next_reference_start in range(mate_contig_length - 300, mate_contig_length)) and  mate_contig_length >= 3000:
-                            transloc_contig.append(read_info.next_reference_name)
-                            transloc_read_loc.append((align_s, align_e))
-                            window_dp[align_s: align_e] -= 1
-                    except Exception as e:
-                        pass
+                try:
+                    mate_info = align_file.mate(read_info)
+                    mate_contig_name = mate_info.reference_name
+                    mate_contig_length = align_file.get_reference_length(mate_contig_name)
+                    if mate_info.mapping_quality >= config['mapping_quality'] and (read_info.next_reference_start in range(0, 300) or read_info.next_reference_start in range(mate_contig_length - 300, mate_contig_length)) and  mate_contig_length >= 3000:
+                        transloc_contig.append(read_info.next_reference_name)
+                        transloc_read_loc.append((align_s, align_e))
+                        window_dp[align_s: align_e] -= 1
+                except Exception as e:
+                    pass
 
             #* Clipped read
             if read_info.is_supplementary:
@@ -100,9 +98,9 @@ def get_window_features(point, contig_seq, read_infos, window_len, align_path):
     window_iv[window_iv == 1] = 0
     return window_cl, window_iv, window_ts, window_dp, multiple_transloc, window_bp
 
-def get_feature(point, contig_seq, read_infos, window_len, is_avg, align_path):
+def get_feature(point, contig_seq, read_infos, window_len, is_avg, align_file):
     point=int(point)
-    window_cl, window_iv, window_ts, window_dp, multiple_transloc, window_bp = get_window_features(point = point, contig_seq = contig_seq, read_infos = read_infos, window_len = window_len, align_path = align_path)
+    window_cl, window_iv, window_ts, window_dp, multiple_transloc, window_bp = get_window_features(point = point, contig_seq = contig_seq, read_infos = read_infos, window_len = window_len, align_file = align_file)
     if all(window_cl == 0) and all(window_iv == 0) and all(window_ts == 0):
         return None, multiple_transloc, 1, window_ts, window_bp
     else:
