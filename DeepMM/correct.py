@@ -1,15 +1,17 @@
 import os
 import random
+import threading
 import subprocess
 import multiprocessing
 from functools import partial
+from concurrent.futures import ThreadPoolExecutor
 
 import torch
 import torch.nn as nn
-import numpy as np
-import pandas as pd
 
 import pysam
+import numpy as np
+import pandas as pd
 from Bio import SeqIO
 from tqdm import tqdm
 
@@ -31,43 +33,66 @@ def process_contig(contig_name, contig_path, align_path, model, device):
     point_pred = []
     pred = []
     chimeric_pred = []
+    lock = threading.Lock()
+
     with pysam.FastaFile(contig_path) as contig_file:
         with pysam.AlignmentFile(align_path) as align_file:
             contig_seq, read_infos = get_contig_infos(contig_name, contig_file, align_file)
+
     contig_len = len(contig_seq)
+    
     if len(read_infos) >= 10:
-        skip_len = config['skip_perc'] * contig_len if config['skip_perc'] * contig_len < 1000 else 1000
+        skip_len = min(config['skip_perc'] * contig_len, 1000)
         is_avg, filtered_readInofs = get_is_avg(read_infos, contig_seq)
-        for point in range(int(skip_len + 0.5 * config['window_len'] ), int(contig_len - skip_len - 0.5 * config['window_len']), config['window_len']):
-            window_feature, multiple_transloc, zero_fea, window_ts, window_bp = get_feature(point = point, contig_seq=contig_seq, read_infos = filtered_readInofs, window_len = config['window_len'], is_avg=is_avg, align_path = align_path)
-            if not multiple_transloc and not zero_fea:
-                max_bp =  int(point - (config['window_len'] / 2)) + np.argmax(window_bp) if max(window_bp) > 0 else point
-                feature_maps = df_difference_nor(window_feature)
-                input_tensor = torch.Tensor(np.array(feature_maps)).to(device).unsqueeze(0)
-                with torch.no_grad():
-                    _, output = model(input_tensor)
+        window_len = config['window_len']
+        window_len_half = 0.5 * window_len
 
-                    max_value, max_index = torch.max(output, dim=1)
-                    #* Class 1 -> misassembled
-                    point_pred.append((point, output[0][1].item()))
-                    pred.append(output[0][1].item())
-                    if max_index.item() == 1 and max_value.item() >= 0.9:
-                        bp_pred.append((max_bp, output[0][1].item()))
-                        if not all(window_ts == 0):
-                            chimeric_pred.append((max_bp, output[0][1].item()))
+        def process_window(point):
+            try:
+                window_feature, multiple_transloc, zero_fea, window_ts, window_bp = get_feature(
+                    point=point,
+                    contig_seq=contig_seq,
+                    read_infos=filtered_readInofs,
+                    window_len=window_len,
+                    is_avg=is_avg,
+                    align_path=align_path
+                )
+                if not multiple_transloc and not zero_fea:
+                    max_bp = int(point - window_len_half) + np.argmax(window_bp) if np.max(window_bp) > 0 else point
+                    feature_maps = df_difference_nor(window_feature)
+                    input_tensor = torch.Tensor(np.array(feature_maps)).to(device).unsqueeze(0)
+                    
+                    with torch.no_grad():
+                        _, output = model(input_tensor)
+                        max_value, max_index = torch.max(output, dim=1)
+                        with lock:
+                            point_pred.append((point, output[0][1].item()))
+                            pred.append(output[0][1].item())
+                            
+                            if max_index.item() == 1 and max_value.item() >= 0.9:
+                                bp_pred.append((max_bp, output[0][1].item()))
+                                if not all(window_ts == 0):
+                                    chimeric_pred.append((max_bp, output[0][1].item()))
+                else:
+                    with lock:
+                        point_pred.append((point, 0))
+                        pred.append(0)
+            except Exception as e:
+                print(f"Error processing window at point {point}: {e}")
 
-            else:
-                point_pred.append((point, 0))
-                pred.append(0)
-    elif len(read_infos) <= 10:
-        bp_pred = [(int(len(contig_seq) / 2), 1)]
+        start_point = int(skip_len + window_len_half)
+        end_point = int(contig_len - skip_len - window_len_half)
+
+        with ThreadPoolExecutor(max_workers=config['window_threads']) as executor:
+            executor.map(process_window, range(start_point, end_point, window_len))
+    else:
+        bp_pred = [(contig_len // 2, 1)]
         pred.append(1)
-
     return {
         'contig_name': contig_name,
         'bp_pred': bp_pred,
         'point_pred': point_pred,
-        'max_prediction': max(pred),
+        'max_prediction': max(pred, default=0),
         'chimeric_pred': chimeric_pred,
         'contig_len': contig_len,
         'window_prediction': pred
@@ -75,7 +100,7 @@ def process_contig(contig_name, contig_path, align_path, model, device):
 
 def correct(args):
     
-    threads = args.threads
+    contig_threads = args.contig_threads
     device = args.gpu_device
     fine_tune = args.fine_tune
     folder_path = args.folder_path
@@ -85,6 +110,7 @@ def correct(args):
     bam_file_name = args.bam_file_name
     correct_all = args.correct_all
     score_cut = args.threshold
+    config['window_threads'] = args.window_threads
     
 
     multiprocessing.set_start_method('spawn')
@@ -129,7 +155,7 @@ def correct(args):
 
     process_contig_partial = partial(process_contig, contig_path=contig_path, align_path=align_path, model = model, device = device)
 
-    with multiprocessing.Pool(processes=threads) as pool:
+    with multiprocessing.Pool(processes=contig_threads) as pool:
         results = list(tqdm(pool.imap(process_contig_partial, total_contig_name), total=len(total_contig_name), desc='Predicting ...'))
 
     contig_test = {result['contig_name']: {'bp_pred': result['bp_pred'], 'point_pred': result['point_pred'],
