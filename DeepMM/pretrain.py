@@ -25,7 +25,7 @@ torch.backends.cudnn.benchmark = False
 
 class TrainingProcess():
 
-    def __init__(self, model, args, gpu_device):
+    def __init__(self, model, args, local_rank):
 
         np.random.seed(args.seed)
         torch.manual_seed(args.seed)
@@ -34,7 +34,8 @@ class TrainingProcess():
 
         self.args = args
         self.model = model
-        self.criterion = torch.nn.CrossEntropyLoss().cuda(self.args.gpu_device)
+        self.local_rank = local_rank
+        self.criterion = torch.nn.CrossEntropyLoss().cuda(self.local_rank)
 
     def training_figure(self, figure_path, x_epochs, train_emb_loss, train_pre_loss, eval_pre_loss, y_eval_acc):
         x_epochs = np.array(x_epochs)
@@ -96,7 +97,7 @@ class TrainingProcess():
 
         with torch.no_grad():
             for _, features, labels in tqdm(dataloader, desc = 'Calculating accuracy ...'):
-                features = features.cuda(self.args.gpu_device)
+                features = features.cuda(self.local_rank)
                 _, outputs = self.model(features)
                 outputs = outputs.cpu()
                 true_label.extend(torch.argmax(labels, dim=1)) 
@@ -114,13 +115,13 @@ class TrainingProcess():
         """
         labels = torch.cat([torch.arange(self.args.batch_size) for i in range(self.args.n_views)], dim=0)
         labels = (labels.unsqueeze(0) == labels.unsqueeze(1)).float()
-        labels = labels.cuda(self.args.gpu_device)
+        labels = labels.cuda(self.local_rank)
 
         features = F.normalize(features, dim=1)
 
         similarity_matrix = torch.matmul(features, features.T)
 
-        mask = torch.eye(labels.shape[0], dtype=torch.bool).cuda(self.args.gpu_device)
+        mask = torch.eye(labels.shape[0], dtype=torch.bool).cuda(self.local_rank)
         labels = labels[~mask].view(labels.shape[0], -1)
         similarity_matrix = similarity_matrix[~mask].view(similarity_matrix.shape[0], -1)
 
@@ -131,115 +132,122 @@ class TrainingProcess():
         negatives = negatives[:, None].expand(-1, self.args.n_views - 1, -1).flatten(0, 1)
 
         logits = torch.cat([positives, negatives], dim=1)
-        labels = torch.zeros(logits.shape[0], dtype=torch.long).cuda(self.args.gpu_device)
+        labels = torch.zeros(logits.shape[0], dtype=torch.long).cuda(self.local_rank)
 
         logits = logits / self.args.temperature
         return logits, labels
     
     def train(self, training_dataset, evaluating_dataset):
-
-        os.makedirs(self.args.checkPoint_path, exist_ok=True)
-        logging.basicConfig(filename=f'{self.args.checkPoint_path}/training.log', level=logging.INFO,
-            format='%(asctime)s - %(levelname)s - %(message)s')
-        best_eval_loss = float('inf')
-        x_epochs = []
-        train_emb_loss = []
-        train_pre_loss = []
-        eval_pre_loss = []
-        y_eval_acc = []
-        logging.info('Training start ...')
-        
-        scaler = GradScaler(enabled=self.args.fp16_precision)
-        optimizer = torch.optim.Adam(self.model.parameters(), self.args.lr, weight_decay=self.args.weight_decay)
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size = 3, gamma = 0.8)
-        for epoch_counter in range(self.args.epochs):
-            train_sampler = DistributedSampler(training_dataset)
-            train_loader = torch.utils.data.DataLoader(  
-                                                        dataset = training_dataset,
-                                                        batch_size = self.args.batch_size, 
-                                                        drop_last = True, 
-                                                        num_workers=8,
-                                                        sampler = train_sampler
-                                                        )
-            train_sampler.set_epoch(epoch_counter)
-
-            self.model.train()
-            emb_epoch_loss = 0
-            pre_epoch_loss = 0
-            batch_count = 0                
-        
-            lr = self.get_lr(optimizer)
-            train_loader = tqdm(train_loader,  desc = f'Epoch [{epoch_counter+1}/{self.args.epochs}], lr ({lr:1.8f})')
-        
-            #* Train
-            for images, window_labels in train_loader:
-
-                optimizer.zero_grad()
-
-                batch_count += 1
-                window_labels = window_labels.cuda(self.args.gpu_device)
-                multi_images = torch.cat(images, dim=0)
-                multi_images = multi_images.cuda(self.args.gpu_device)
-
-                with autocast(enabled=self.args.fp16_precision, device_type='cuda'):
-                    embeddings, outputs = self.model(multi_images)
-                    outputs = outputs[:self.args.batch_size]
-                    logits, labels = self.info_nce_loss(embeddings)
-                    loss_1 = self.criterion(logits, labels)
-                    loss_2 = self.criterion(outputs, window_labels)
-                    emb_epoch_loss += loss_1.item()
-                    pre_epoch_loss += loss_2.item()
-
-                loss =  loss_1 +  loss_2
+        try:
+            if self.local_rank == 0:
+                os.makedirs(self.args.checkPoint_path, exist_ok=True)
+                logging.basicConfig(filename=f'{self.args.checkPoint_path}/training.log', level=logging.INFO,
+                    format='%(asctime)s - %(levelname)s - %(message)s')
+                best_eval_loss = float('inf')
+                x_epochs = []
+                train_emb_loss = []
+                train_pre_loss = []
+                eval_pre_loss = []
+                y_eval_acc = []
+                logging.info('Training start ...')
             
-                scaler.scale(loss).backward()
+            scaler = GradScaler(enabled=self.args.fp16_precision)
+            optimizer = torch.optim.Adam(self.model.parameters(), self.args.lr, weight_decay=self.args.weight_decay)
+            scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size = 3, gamma = 0.8)
+            for epoch_counter in range(self.args.epochs):
+                train_sampler = DistributedSampler(training_dataset)
+                train_loader = torch.utils.data.DataLoader(  
+                                                            dataset = training_dataset,
+                                                            batch_size = self.args.batch_size, 
+                                                            drop_last = True, 
+                                                            num_workers=8,
+                                                            sampler = train_sampler
+                                                            )
+                train_sampler.set_epoch(epoch_counter)
 
-                scaler.step(optimizer)
-                scaler.update()
-            
-            dist.barrier()
-            #* Eval
-            eval_dataloader = torch.utils.data.DataLoader(
-                                        dataset = evaluating_dataset,
-                                        batch_size = self.args.batch_size,
-                                        shuffle = True,
-                                        drop_last = True,
-                                        num_workers=8
-                                        )
-            self.model.eval()
-            eval_epoch_loss = 0
-            batch_count = 0
-            with torch.no_grad():
-                for _, features, labels in tqdm(eval_dataloader, desc='Evaluating ...'):
+                self.model.train()
+                emb_epoch_loss = 0
+                pre_epoch_loss = 0
+                batch_count = 0                
+                
+                if self.local_rank == 0:
+                    lr = self.get_lr(optimizer)
+                    train_loader = tqdm(train_loader,  desc = f'Epoch [{epoch_counter+1}/{self.args.epochs}], lr ({lr:1.8f})')
+              
+                #* Train
+                for images, window_labels in train_loader:
+
+                    optimizer.zero_grad()
+
                     batch_count += 1
-                    features, labels = features.cuda(self.args.gpu_device), labels.cuda(self.args.gpu_device)
-                    _, outputs = self.model(features)
-                    loss = self.criterion(outputs, labels)
-                    eval_epoch_loss += loss.item()
-            evaluate_loss = eval_epoch_loss / batch_count 
+                    window_labels = window_labels.cuda(self.local_rank)
+                    multi_images = torch.cat(images, dim=0)
+                    multi_images = multi_images.cuda(self.local_rank)
 
-            eval_acc= self.cal_metrics(evaluating_dataset)
-            logging.info(f'Epoch [{epoch_counter+1}/{self.args.epochs}]')
-            logging.info(F'Embedding Loss :{emb_epoch_loss / batch_count}')
-            logging.info(F'Train Prediction Loss :{pre_epoch_loss / batch_count}')
-            logging.info(F'Eval Prediction Loss :{evaluate_loss}')
-            logging.info(F'Eval accuracy: {eval_acc}')
-            # Model save
-            if evaluate_loss < best_eval_loss:
-                best_eval_loss = evaluate_loss
-                torch.save(self.model.module.state_dict(), os.path.join(self.args.checkPoint_path, f'checkpoint.pt'))
-                logging.info('Model saved')
+                    with autocast(enabled=self.args.fp16_precision, device_type='cuda'):
+                        embeddings, outputs = self.model(multi_images)
+                        outputs = outputs[:self.args.batch_size]
+                        logits, labels = self.info_nce_loss(embeddings)
+                        loss_1 = self.criterion(logits, labels)
+                        loss_2 = self.criterion(outputs, window_labels)
+                        emb_epoch_loss += loss_1.item()
+                        pre_epoch_loss += loss_2.item()
 
-            x_epochs.append(epoch_counter+1)
-            train_emb_loss.append(emb_epoch_loss / batch_count)
-            train_pre_loss.append(pre_epoch_loss / batch_count)
-            eval_pre_loss.append(evaluate_loss)
-            y_eval_acc.append(eval_acc)
+                    loss =  loss_1 +  loss_2
+                
+                    scaler.scale(loss).backward()
 
-            scheduler.step()
+                    scaler.step(optimizer)
+                    scaler.update()
+                
+                dist.barrier()
+                if self.local_rank == 0:
+                    #* Eval
+                    eval_dataloader = torch.utils.data.DataLoader(
+                                                dataset = evaluating_dataset,
+                                                batch_size = self.args.batch_size,
+                                                shuffle = True,
+                                                drop_last = True,
+                                                num_workers=8
+                                                )
+                    self.model.eval()
+                    eval_epoch_loss = 0
+                    batch_count = 0
+                    with torch.no_grad():
+                        for _, features, labels in tqdm(eval_dataloader, desc='Evaluating ...'):
+                            batch_count += 1
+                            features, labels = features.cuda(self.local_rank), labels.cuda(self.local_rank)
+                            _, outputs = self.model(features)
+                            loss = self.criterion(outputs, labels)
+                            eval_epoch_loss += loss.item()
+                    evaluate_loss = eval_epoch_loss / batch_count 
 
-        torch.cuda.empty_cache()
-        self.training_figure(self.args.checkPoint_path, x_epochs, train_emb_loss, train_pre_loss, eval_pre_loss, y_eval_acc)
+                    eval_acc= self.cal_metrics(evaluating_dataset)
+                    logging.info(f'Epoch [{epoch_counter+1}/{self.args.epochs}]')
+                    logging.info(F'Embedding Loss :{emb_epoch_loss / batch_count}')
+                    logging.info(F'Train Prediction Loss :{pre_epoch_loss / batch_count}')
+                    logging.info(F'Eval Prediction Loss :{evaluate_loss}')
+                    logging.info(F'Eval accuracy: {eval_acc}')
+                    # Model save
+                    if evaluate_loss < best_eval_loss:
+                        best_eval_loss = evaluate_loss
+                        torch.save(self.model.module.state_dict(), os.path.join(self.args.checkPoint_path, f'checkpoint.pt'))
+                        logging.info('Model saved')
+
+                    x_epochs.append(epoch_counter+1)
+                    train_emb_loss.append(emb_epoch_loss / batch_count)
+                    train_pre_loss.append(pre_epoch_loss / batch_count)
+                    eval_pre_loss.append(evaluate_loss)
+                    y_eval_acc.append(eval_acc)
+
+                scheduler.step()
+
+            torch.cuda.empty_cache()
+            if self.local_rank == 0:
+                self.training_figure(self.args.checkPoint_path, x_epochs, train_emb_loss, train_pre_loss, eval_pre_loss, y_eval_acc)
+
+        except Exception as e:
+            logging.error(f"Process {self.local_rank} encountered an error: {e}")
 
 def pretrain(args):
     
@@ -250,7 +258,13 @@ def pretrain(args):
     evaluating_dataset = EvalDataset(eval_dataset_path)
     
     model = LinearEvaluation(ResNetSimCLR(base_model=args.arch, out_dim=args.out_dim))
-    model = model.cuda(args.gpu_device)
+    local_rank = int(os.environ["LOCAL_RANK"])
+    torch.distributed.init_process_group('nccl', world_size = args.gpus, rank = local_rank, timeout = timedelta(minutes=300))
+    torch.cuda.set_device(local_rank)
+   
+    model = DistributedDataParallel(model.cuda(local_rank), device_ids = [local_rank])
 
-    tp = TrainingProcess(model=model, args=args)
+    tp = TrainingProcess(model=model, args=args, local_rank=local_rank)
     tp.train(training_dataset, evaluating_dataset)
+
+
