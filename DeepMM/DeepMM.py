@@ -5,8 +5,8 @@ import warnings
 
 from .dataset_finetune import *
 from .dataset_pretrain import *
-from .training_finetune import *
-from .training_pretrain import *
+from .finetune import *
+from .pretrain import *
 from .correct import *
 
 
