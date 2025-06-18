@@ -15,9 +15,9 @@ config = {
     'feature_channels': 6,
     'mapping_quality': 40,
     'alignment_score': 100,
-    'threshold': 0.9,
     'n_views': 5,
-    'min_split_length':1000
+    'min_split_length':1000,
+    'window_threads': 8
 }
 
 def get_contig_infos(contig_name, contig_file, align_file):
