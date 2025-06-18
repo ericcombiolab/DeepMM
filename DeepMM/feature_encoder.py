@@ -110,3 +110,4 @@ def get_feature(point, contig_seq, read_infos, window_len, is_avg, align_path):
         window_is_avg = is_avg[b_window: e_window]
         window_feature = np.vstack((window_cl, window_iv, window_ts, window_is_avg, window_dp))
         return window_feature, multiple_transloc, 0, window_ts, window_bp
+    
