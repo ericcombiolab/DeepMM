@@ -84,7 +84,7 @@ Files in `./example`
 DeepMM correct --folder_path ./example/final.contigs.fa \
                --model_weight_path ./finetune-model-weight/cami_finetune_checkPoint.pt \
                --fine_tune \
-               --threads 8 \
+               --contig_threads 8 \
                --gpu_device cuda:0
 ```
 The output is under `./example/deepmm_output`
