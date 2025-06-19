@@ -68,8 +68,8 @@ Here we provide two model weight with different read profile (insert_size_mean, 
 DeepMM correct --folder_path /path/to/your/data\
                --model_weight_path /path/to/model\
                --fine_tune\ ##(only pass the parameter when you use finetuned model weight)
-               --threads 8\
-               --gpu_device cuda:0\
+               --contig_threads 8\
+               --gpu_device cuda:0
 ```
 ## Example
 
