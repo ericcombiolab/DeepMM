@@ -55,12 +55,12 @@ Here we provide two model weight with different read profile (insert_size_mean, 
 - default: (200, 20)
   ```
   mkdir -p ./pretrain-model-weight
-  wget -P ./pretrain-model-weight https://zenodo.org/records/15628765/files/checkpoint.pt
+  wget -P ./pretrain-model-weight https://zenodo.org/records/15702546/files/checkpoint.pt
   ```
 - CAMI-type: (270, 27)
   ```
   mkdir -p ./finetune-model-weight 
-  wget -P ./finetune-model-weight https://zenodo.org/records/15628765/files/cami_finetune_checkPoint.pt
+  wget -P ./finetune-model-weight https://zenodo.org/records/15702546/files/cami_finetune_checkPoint.pt
   ```
 
 - Run DeepMM  
@@ -97,8 +97,8 @@ As reads from different sequencers have slight differernt, which may effect mode
 - [metaQusat](https://quast.sourceforge.net/metaquast)
 ### Download reference
 ```
-wget https://zenodo.org/records/15628765/files/reference.tar.gz
-wget https://zenodo.org/records/15628765/files/genome_list.tsv
+wget https://zenodo.org/records/15702546/files/reference.tar.gz
+wget https://zenodo.org/records/15702546/files/genome_list.tsv
 ```
 ### Create read error profile
 ```
