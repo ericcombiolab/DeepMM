@@ -1,4 +1,5 @@
 # DeepMM: Identify and correct Metagenome Misassemblies with deep learning
+[![Visitors](https://api.visitorbadge.io/api/visitors?path=https%3A%2F%2Fgithub.com%2Fericcombiolab%2FDeepMM&label=Views&labelColor=%23697689&countColor=%23ff8a65&style=flat)](https://github.com/ericcombiolab/DeepMM)
 
 ## Requirements and Installation
 Make sure you have the dependencies below installed and accessible in your $PATH.
