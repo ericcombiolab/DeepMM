@@ -77,13 +77,13 @@ def get_views_feature(ori_point, comm_type, comm, contig_name, contig_seq, read_
     if fold > 20:
         sub_ratio = random.uniform(0.6, 1)
         sub_sample_reads = random.sample(read_infos, int(aligned_reads_count *  sub_ratio))
-        is_avg = get_is_avg(sub_sample_reads, contig_seq)
+        is_avg, filtered_sub_sample_reads = get_is_avg(sub_sample_reads, contig_seq)
         b_window = int(pick_point - (config['window_len'] / 2))
         e_window = b_window + config['window_len']
         window_is_avg = is_avg[b_window: e_window]
         if all(window_is_avg > 0):
             window_name = f"{comm_type}_comm_{comm}_{contig_name}_{pick_point}"
-            window_feature, multiple_transloc, zero_fea, window_ts, window_bp = get_feature(point = pick_point, contig_seq=contig_seq, read_infos = sub_sample_reads, window_len = config['window_len'], is_avg=is_avg, align_path = align_path)
+            window_feature, multiple_transloc, zero_fea, window_ts, window_bp = get_feature(point = pick_point, contig_seq=contig_seq, read_infos = filtered_sub_sample_reads, window_len = config['window_len'], is_avg=is_avg, align_path = align_path)
             if not multiple_transloc and not zero_fea:
                 feature_file = os.path.join(folder_path, f'{window_name}_sub.npy')
                 np.save(feature_file, window_feature)
@@ -129,7 +129,7 @@ def get_positive_window(feature_folder, proper_bp_contig_names, contig_path, ali
                 if aligned_reads_count >= 10:
                     contig_len = len(contig_seq)
                     skip_len = config['skip_perc'] * contig_len if config['skip_perc'] * contig_len < 1000 else 1000
-                    is_avg = get_is_avg(read_infos, contig_seq)
+                    is_avg, read_infos = get_is_avg(read_infos, contig_seq)
                     for label_point in positive_contig[contig_name]['break_point']:
                         #* pick proper break point label
                         if skip_len + config['window_len'] / 2 <= label_point < contig_len - skip_len - config['window_len'] / 2:
@@ -157,7 +157,7 @@ def get_negative_window(feature_folder, negative_contig_names, contig_path, alig
                 if aligned_reads_count >= 10:
                     contig_len = len(contig_seq)
                     skip_len = config['skip_perc'] * contig_len if config['skip_perc'] * contig_len < 1000 else 1000
-                    is_avg = get_is_avg(read_infos, contig_seq)
+                    is_avg, read_infos = get_is_avg(read_infos, contig_seq)
                     #* Forward 
                     for pick_point in range(int(skip_len + config['window_len'] / 2), int(contig_len - skip_len - config['window_len'] / 2), config['window_len']):
                         label = 0

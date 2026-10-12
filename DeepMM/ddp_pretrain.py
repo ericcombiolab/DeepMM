@@ -1,5 +1,5 @@
 import os
-import sys
+import time
 import random
 import argparse
 import logging
@@ -22,9 +22,20 @@ from scipy.interpolate import make_interp_spline
 from tools import *
 from model import *
 
-os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
-torch.backends.cudnn.deterministic = True
-torch.backends.cudnn.benchmark = False
+# Debug aid only: CUDA_LAUNCH_BLOCKING forces synchronous CUDA launches
+# (~25% slower on RTX4090). Re-enable explicitly with DEEPMM_LAUNCH_BLOCKING=1.
+if os.environ.get('DEEPMM_LAUNCH_BLOCKING') == '1':
+    os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+if os.environ.get('DEEPMM_FAST_CUDNN') == '1':
+    # Throughput mode: allow cuDNN autotuning + TF32.  Slightly
+    # non-deterministic, but materially faster for the conv trunk.
+    torch.backends.cudnn.deterministic = False
+    torch.backends.cudnn.benchmark = True
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+else:
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 class TrainingProcess():
 
@@ -93,14 +104,14 @@ class TrainingProcess():
 
     def cal_metrics(self,dataset):
         
-        dataloader = torch.utils.data.DataLoader(dataset = dataset, batch_size = self.args.batch_size, shuffle = True, drop_last = True, num_workers=8)
+        dataloader = torch.utils.data.DataLoader(dataset = dataset, batch_size = self.args.batch_size, shuffle = True, drop_last = True, num_workers=self.args.workers, pin_memory = True)
         self.model.eval()
         true_label = []
         pred_label = []
 
         with torch.no_grad():
             for _, features, labels in tqdm(dataloader, desc = 'Calculating accuracy ...'):
-                features = features.cuda(self.local_rank)
+                features = features.cuda(self.local_rank, non_blocking=True)
                 _, outputs = self.model(features)
                 outputs = outputs.cpu()
                 true_label.extend(torch.argmax(labels, dim=1)) 
@@ -163,8 +174,10 @@ class TrainingProcess():
                                                             dataset = training_dataset,
                                                             batch_size = self.args.batch_size, 
                                                             drop_last = True, 
-                                                            num_workers=8,
-                                                            sampler = train_sampler
+                                                            num_workers=self.args.workers,
+                                                            sampler = train_sampler,
+                                                            pin_memory = True,
+                                                            prefetch_factor = self.args.prefetch
                                                             )
                 train_sampler.set_epoch(epoch_counter)
 
@@ -178,14 +191,23 @@ class TrainingProcess():
                     train_loader = tqdm(train_loader,  desc = f'Epoch [{epoch_counter+1}/{self.args.epochs}], lr ({lr:1.8f})')
               
                 #* Train
+                _prof = (os.environ.get('DEEPMM_PROFILE') == '1')
+                _pt = [0.0, 0.0, 0.0, 0.0, None, 0]
                 for images, window_labels in train_loader:
+                    _t0 = time.time() if _prof else 0.0
 
                     optimizer.zero_grad()
 
                     batch_count += 1
-                    window_labels = window_labels.cuda(self.local_rank)
-                    multi_images = torch.cat(images, dim=0)
-                    multi_images = multi_images.cuda(self.local_rank)
+                    window_labels = window_labels.cuda(self.local_rank, non_blocking=True)
+                    # Assemble the batch on the GPU.  torch.cat() on CPU allocated
+                    # and copied 5.28 GB, then .cuda() staged another 5.28 GB
+                    # through pinned memory -- per step, on the critical path.
+                    multi_images = torch.cat(
+                        [v.cuda(self.local_rank, non_blocking=True) for v in images], dim=0)
+                    if _prof:
+                        torch.cuda.synchronize(self.local_rank)
+                        _t1 = time.time()
 
                     with autocast(enabled=self.args.fp16_precision, device_type='cuda'):
                         embeddings, outputs = self.model(multi_images)
@@ -195,6 +217,9 @@ class TrainingProcess():
                         loss_2 = self.criterion(outputs, window_labels)
                         emb_epoch_loss += loss_1.item()
                         pre_epoch_loss += loss_2.item()
+                        if _prof:
+                            torch.cuda.synchronize(self.local_rank)
+                            _t2 = time.time()
 
                     loss =  loss_1 +  loss_2
                 
@@ -202,6 +227,22 @@ class TrainingProcess():
 
                     scaler.step(optimizer)
                     scaler.update()
+                    if _prof:
+                        torch.cuda.synchronize(self.local_rank)
+                        _t3 = time.time()
+                        _pt[0] += (_t1 - _t0)
+                        _pt[1] += (_t2 - _t1)
+                        _pt[2] += (_t3 - _t2)
+                        if _pt[4] is not None:
+                            _pt[3] += (_t0 - _pt[4])
+                        _pt[4] = _t3
+                        _pt[5] += 1
+                        if _pt[5] % 25 == 0:
+                            _k = _pt[5]
+                            print('[prof][rank%d] i=%d  wait_load=%.0fms  cat+h2d=%.0fms  fwd=%.0fms  bwd+allreduce=%.0fms  TOTAL=%.0fms' % (
+                                self.local_rank, _k, _pt[3] / _k * 1000, _pt[0] / _k * 1000,
+                                _pt[1] / _k * 1000, _pt[2] / _k * 1000,
+                                (_pt[0] + _pt[1] + _pt[2] + _pt[3]) / _k * 1000), flush=True)
                 
                 dist.barrier()
                 if self.local_rank == 0:
@@ -211,7 +252,8 @@ class TrainingProcess():
                                                 batch_size = self.args.batch_size,
                                                 shuffle = True,
                                                 drop_last = True,
-                                                num_workers=8
+                                                num_workers=self.args.workers,
+                                                pin_memory = True
                                                 )
                     self.model.eval()
                     eval_epoch_loss = 0
@@ -219,7 +261,8 @@ class TrainingProcess():
                     with torch.no_grad():
                         for _, features, labels in tqdm(eval_dataloader, desc='Evaluating ...'):
                             batch_count += 1
-                            features, labels = features.cuda(self.local_rank), labels.cuda(self.local_rank)
+                            features = features.cuda(self.local_rank, non_blocking=True)
+                            labels = labels.cuda(self.local_rank, non_blocking=True)
                             _, outputs = self.model(features)
                             loss = self.criterion(outputs, labels)
                             eval_epoch_loss += loss.item()
@@ -234,7 +277,7 @@ class TrainingProcess():
                     # Model save
                     if evaluate_loss < best_eval_loss:
                         best_eval_loss = evaluate_loss
-                        torch.save(self.model.module.state_dict(), os.path.join(self.args.checkPoint_path, f'checkpoint.pt'))
+                        torch.save(self.model.module.state_dict(), os.path.join(self.args.checkPoint_path, f'checkPoint.pt'))
                         logging.info('Model saved')
 
                     x_epochs.append(epoch_counter+1)
@@ -258,6 +301,7 @@ def main():
                                      description='Identify and correct metagenomic misassemblies with deep learning')
     parser.add_argument('--eval_dataset_path', metavar='DIR', default='', help='path to eavl dataset')
     parser.add_argument('--pretrain_dataset_path', metavar='DIR', default='', help='path to pretrain dataset')
+    parser.add_argument('--pretrain_npz_path', metavar='DIR', default='', help='path to pre-packed npz features (optional)')
     parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet50', help='model architecture: resnet18 | resnet 50 (default: resnet50)')
     parser.add_argument('-j', '--workers', default=32, type=int, metavar='N', help='number of data loading workers (default: 32)')
     parser.add_argument('--epochs', default=100, type=int, metavar='N', help='number of total epochs to run')
@@ -270,6 +314,8 @@ def main():
     parser.add_argument('--n_views', default=5, type=int, metavar='N', help='Number of views for contrastive learning training.')
     parser.add_argument('--gpus', default=1, type=int, help='Number of GPUs.')
     parser.add_argument('--checkPoint_path', type=str, default=f'./pretiran-model-weight', help='Checkpoint path')
+    parser.add_argument('--prefetch', default=1, type=int, metavar='N',
+                        help='DataLoader prefetch_factor (batches per worker)')
     parser.add_argument('--fp16-precision', action='store_true', help='Whether or not to use 16-bit precision GPU training.')
     args = parser.parse_args()
 
@@ -291,7 +337,7 @@ def main():
     if local_rank == 0:
         logger.info('Processing: Loading Dataset ...')
 
-    training_dataset = Pretrain_FeatureDataset(pretrain_dataset_path)
+    training_dataset = Pretrain_FeatureDataset(pretrain_dataset_path, preload=True, npz_dir=args.pretrain_npz_path if args.pretrain_npz_path else None)
     evaluating_dataset = EvalDataset(eval_dataset_path, 'eval')
 
     if local_rank == 0:

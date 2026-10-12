@@ -1,215 +1,150 @@
 import os
-import random
-import threading
-import subprocess
-import multiprocessing
-from functools import partial
-from concurrent.futures import ThreadPoolExecutor
-
-import torch
-import torch.nn as nn
-
-import pysam
 import numpy as np
 import pandas as pd
 from Bio import SeqIO
 from tqdm import tqdm
 
+from .tools import config
+from .escore import E_P05
 
-from .tools import * 
-from .model import *
-from .feature_encoder import *
+RAW_TSV = 'assembly_prediction.tsv'
+ESCORE_TSV = 'assembly_prediction.escore.tsv'
+ESCORE_DIR = 'escore'          # legacy escore_post.py layout
 
-np.random.seed(42)
-torch.manual_seed(42)
-random.seed(42)
-torch.cuda.manual_seed_all(42)
 
-torch.backends.cudnn.deterministic = True
-torch.backends.cudnn.benchmark = False
+def escore_candidates(output_folder_path):
+    """Every location an E-value TSV is known to live, most specific first.
 
-def process_contig(contig_name, contig_path, align_path, model, device):
-    bp_pred = []
-    point_pred = []
-    pred = []
-    chimeric_pred = []
-    lock = threading.Lock()
+    Both layouts are in use, and the second one cannot be found by name alone
+    because it reuses the raw TSV's file name:
 
-    with pysam.FastaFile(contig_path) as contig_file:
-        with pysam.AlignmentFile(align_path) as align_file:
-            contig_seq, read_infos = get_contig_infos(contig_name, contig_file, align_file)
+        <out>/assembly_prediction.escore.tsv    written by `predict` / `escore`
+        <out>/escore/assembly_prediction.tsv    written by the older
+                                                escore_post.py + correct flow
+        <out>/../escore/assembly_prediction.tsv same flow, when <out> is the
+                                                deepmm_output folder
+    """
+    out = os.path.abspath(output_folder_path)
+    return [
+        os.path.join(out, ESCORE_TSV),
+        os.path.normpath(os.path.join(out, ESCORE_DIR, RAW_TSV)),
+        os.path.normpath(os.path.join(out, os.pardir, ESCORE_DIR, RAW_TSV)),
+    ]
 
-    contig_len = len(contig_seq)
-    
-    if len(read_infos) >= 10:
-        skip_len = min(config['skip_perc'] * contig_len, 1000)
-        is_avg, filtered_readInofs = get_is_avg(read_infos, contig_seq)
-        window_len = config['window_len']
-        window_len_half = 0.5 * window_len
 
-        def process_window(point):
-            try:
-                window_feature, multiple_transloc, zero_fea, window_ts, window_bp = get_feature(
-                    point=point,
-                    contig_seq=contig_seq,
-                    read_infos=filtered_readInofs,
-                    window_len=window_len,
-                    is_avg=is_avg,
-                    align_path=align_path
-                )
-                if not multiple_transloc and not zero_fea:
-                    max_bp = int(point - window_len_half) + np.argmax(window_bp) if np.max(window_bp) > 0 else point
-                    feature_maps = df_difference_nor(window_feature)
-                    input_tensor = torch.Tensor(np.array(feature_maps)).to(device).unsqueeze(0)
-                    
-                    with torch.no_grad():
-                        _, output = model(input_tensor)
-                        max_value, max_index = torch.max(output, dim=1)
-                        with lock:
-                            point_pred.append((point, output[0][1].item()))
-                            pred.append(output[0][1].item())
-                            
-                            if max_index.item() == 1 and max_value.item() >= 0.9:
-                                bp_pred.append((max_bp, output[0][1].item()))
-                                if not all(window_ts == 0):
-                                    chimeric_pred.append((max_bp, output[0][1].item()))
-                else:
-                    with lock:
-                        point_pred.append((point, 0))
-                        pred.append(0)
-            except Exception as e:
-                print(f"Error processing window at point {point}: {e}")
+def resolve_prediction_tsv(output_folder_path, file_name='', source='auto'):
+    """Pick which prediction TSV ``correct`` acts on.
 
-        start_point = int(skip_len + window_len_half)
-        end_point = int(contig_len - skip_len - window_len_half)
+    ``file_name`` wins when given explicitly.  Otherwise ``source`` decides:
 
-        with ThreadPoolExecutor(max_workers=config['window_threads']) as executor:
-            executor.map(process_window, range(start_point, end_point, window_len))
-    else:
-        bp_pred = [(contig_len // 2, 1)]
-        pred.append(1)
-    return {
-        'contig_name': contig_name,
-        'bp_pred': bp_pred,
-        'point_pred': point_pred,
-        'max_prediction': max(pred, default=0),
-        'chimeric_pred': chimeric_pred,
-        'contig_len': contig_len,
-        'window_prediction': pred
-    }
+        raw     -> assembly_prediction.tsv   (raw score, a sigmoid in (0, 1))
+        escore  -> the E-value TSV, in whichever layout it was written
+        auto    -> the E-value TSV when one exists, else the raw TSV
+    """
+    if file_name:
+        return os.path.join(output_folder_path, file_name)
+    raw = os.path.join(output_folder_path, RAW_TSV)
+    if source == 'raw':
+        return raw
+    candidates = escore_candidates(output_folder_path)
+    found = next((c for c in candidates if os.path.isfile(c)), None)
+    if found:
+        return found
+    # Nothing on disk: return the canonical name for --input escore so the
+    # caller's error message points at the file we would have written.
+    return candidates[0] if source == 'escore' else raw
+
+
+def score_scale(tsv_path):
+    """Decide whether a prediction TSV holds E-values or raw scores.
+
+    The two live on different scales, so the sensible default cutoff depends on
+    which one this is.  Contents win over naming, because the legacy layout
+    reuses the raw TSV's file name: an E-value is ``-log10(p)`` and is unbounded
+    above, whereas a raw score is a sigmoid and can never exceed 1, so a maximum
+    above 1 settles it outright.  Otherwise fall back to the path hints.
+    """
+    try:
+        col = pd.read_csv(tsv_path, sep='\t', usecols=['Prediction'])['Prediction']
+        col = pd.to_numeric(col, errors='coerce').dropna()
+        if len(col) and float(col.max()) > 1.0:
+            return 'escore'
+    except Exception:
+        pass
+    if os.path.basename(tsv_path).endswith('.escore.tsv'):
+        return 'escore'
+    if os.path.basename(os.path.dirname(os.path.abspath(tsv_path))) == ESCORE_DIR:
+        return 'escore'
+    return 'raw'
+
+
+def default_threshold(tsv_path):
+    """E-values and raw scores live on different scales, so the sensible default
+    cutoff depends on which score the TSV holds."""
+    return E_P05 if score_scale(tsv_path) == 'escore' else 0.9
+
 
 def correct(args):
-    
-    contig_threads = args.contig_threads
-    device = args.gpu_device
-    fine_tune = args.fine_tune
+    """Split misassembled contigs using an existing assembly_prediction.tsv.
+
+    This is a pure post-processing step: it reads the prediction TSV produced
+    by ``predict`` (or a prior ``correct`` run) and does NOT run any inference.
+
+    Correction uses the generic ``Prediction`` column (all misassembly types),
+    not the ``Chimeric_Prediction`` column (which was an interspecies-specific
+    heuristic gated on ``window_ts != 0``). This is the new intended logic.
+    """
     folder_path = args.folder_path
-    model_weight_path = args.model_weight_path
-    file_name = args.file_name
     contig_file_name = args.contig_file_name
-    bam_file_name = args.bam_file_name
-    correct_all = args.correct_all
-    score_cut = args.threshold
-    config['window_threads'] = args.window_threads
-    
+    bam_file_name = getattr(args, 'bam_file_name', 'sort.bam')  # unused; kept for CLI compat
+    file_name = getattr(args, 'file_name', '') or ''
+    output_dir = getattr(args, 'output_dir', '') or ''
+    source = getattr(args, 'input', 'auto') or 'auto'
 
-    multiprocessing.set_start_method('spawn')
     contig_path = os.path.join(folder_path, contig_file_name)
-    align_path = os.path.join(folder_path, bam_file_name)
 
-    contig_fai_path = f'{contig_path}.fai'
-    align_fai_path = f'{align_path}.bai'
-
-    touch_cmd = [
-        'touch', contig_fai_path
-    ]
-    subprocess.run(touch_cmd)
-    touch_cmd = [
-        'touch', align_fai_path
-    ]
-    subprocess.run(touch_cmd)
-
-    output_folder_path = f'{folder_path}/deepmm_output'
+    output_folder_path = output_dir if output_dir else f'{folder_path}/deepmm_output'
     os.makedirs(output_folder_path, exist_ok=True)
-    
-    model = LinearEvaluation(ResNetSimCLR(base_model='resnet50', out_dim=128))
+    final_tsv_path = resolve_prediction_tsv(output_folder_path, file_name, source)
 
-    if fine_tune:
-        print("Using Fine-tune model")
-        model = FinetuneModel(model)
-    else:
-        print("Using Default model")
+    if not os.path.isfile(final_tsv_path):
+        raise FileNotFoundError(
+            f"Prediction TSV not found: {final_tsv_path}. "
+            f"Run `predict` first (it writes both {RAW_TSV} and {ESCORE_TSV}), "
+            f"or ensure --output_dir points at the folder holding them. "
+            f"You can also run `escore` to build the E-value TSV from an existing run."
+        )
 
-    model.load_state_dict(torch.load(model_weight_path, map_location = device, weights_only=True))
-    model = model.to(device)
-    model.eval()   
+    explicit_threshold = args.threshold is not None
+    scale = score_scale(final_tsv_path)
+    score_cut = float(args.threshold) if explicit_threshold else default_threshold(final_tsv_path)
+    print(f"Using {final_tsv_path} | scale={scale} | threshold={score_cut}"
+          f"{'' if explicit_threshold else ' (default for this score scale)'}")
+    if scale == 'escore' and score_cut < E_P05:
+        print(
+            f"WARNING: threshold {score_cut} is below the E-value BreakPoint gate "
+            f"({E_P05}). Contigs with {score_cut} < E < {E_P05} are selected here but "
+            f"carry BreakPoint == -1, so they will be silently left unsplit. Keep the "
+            f"threshold at or above {E_P05}, or regenerate the TSV with "
+            f"`escore --bp_min_e {score_cut}`."
+        )
 
-    contig_test = {}
-    total_contig_name = []
-    with pysam.FastaFile(contig_path) as contig_file:
-        all_contig_names = contig_file.references
-        for contig_name in all_contig_names:
-            contig_seq = contig_file.fetch(contig_name)
-            if config['min_contig_length'] <= len(contig_seq) < config['max_contig_length']:
-                total_contig_name.append(contig_name)
+    df = pd.read_csv(final_tsv_path, sep='\t')
 
-    process_contig_partial = partial(process_contig, contig_path=contig_path, align_path=align_path, model = model, device = device)
-
-    with multiprocessing.Pool(processes=contig_threads) as pool:
-        results = list(tqdm(pool.imap(process_contig_partial, total_contig_name), total=len(total_contig_name), desc='Predicting ...'))
-
-    contig_test = {result['contig_name']: {'bp_pred': result['bp_pred'], 'point_pred': result['point_pred'],
-                                            'max_prediction': result['max_prediction'], 'contig_len': result['contig_len'],
-                                            'chimeric_pred': result['chimeric_pred'], 'window_prediction': result['window_prediction']
-                                            } for result in results}
-
-    breakcontigs = []
-    for contig_name in contig_test.keys():
-        if len(contig_test[contig_name]['bp_pred']) > 0:
-            breakcontigs.append(contig_name)
-            
-    with open(f'{output_folder_path}/{file_name}', 'w') as f:
-        f.write('Assembly\tBreakPoint\tPrediction\tLength\tChimeric_BreakPoint\tChimeric_Prediction\n')
-        for contig_name in total_contig_name:
-            if contig_name in breakcontigs:
-                sorted_data = sorted(contig_test[contig_name]['bp_pred'], key=lambda x: x[1])
-                bp = sorted_data[-1][0]
-                bp_prediction = sorted_data[-1][1]
-                if len(contig_test[contig_name]['chimeric_pred']) > 0:
-                    sorted_data = sorted(contig_test[contig_name]['chimeric_pred'], key=lambda x: x[1])
-                    chi_point = sorted_data[-1][0]
-                    chi_prediction = sorted_data[-1][1]
-                    f.write(contig_name + '\t' + str(bp) + '\t' + str(bp_prediction) + '\t' + str(contig_test[contig_name]['contig_len']) + '\t' + str(chi_point) + '\t' + str(chi_prediction) + '\n')
-                else:
-                    f.write(contig_name + '\t' + str(bp) + '\t' + str(bp_prediction) + '\t' + str(contig_test[contig_name]['contig_len']) + '\t' + '-1' + '\t' + '0' + '\n')
-            else:
-                f.write(contig_name + '\t' + '-1' + '\t' + str(contig_test[contig_name]['max_prediction']) + '\t' + str(contig_test[contig_name]['contig_len']) + '\t' + '-1' + '\t' + '0' + '\n')
+    # New logic: use generic Prediction (all misassembly types).
+    print('Correcting all misassemblies (Prediction column)')
+    breakcontigs = df.loc[df['Prediction'] > score_cut, ]
+    breakcontigs = breakcontigs.loc[breakcontigs['BreakPoint'] > config['min_split_length'], ]
+    breakcontigs = breakcontigs.loc[(breakcontigs['Length'] - breakcontigs['BreakPoint']) > config['min_split_length'], ]
+    breakcontigs = list(np.unique(breakcontigs['Assembly']))
 
     corrected_contig_file = os.path.join(output_folder_path, "corrected_contigs.fa")
-    original_file = f'{folder_path}/{contig_file_name}'
-    input_file = SeqIO.parse(original_file, "fasta")
-    df = pd.read_csv(f'{output_folder_path}/{file_name}', sep='\t')
-    
-    if not correct_all:
-        print('Correcting chimeric misassembly')
-        breakcontigs = df.loc[df['Chimeric_Prediction'] > score_cut,]
-        breakcontigs = breakcontigs.loc[breakcontigs['Chimeric_BreakPoint'] > config['min_split_length'], ]
-        breakcontigs = breakcontigs.loc[(breakcontigs['Length'] - breakcontigs['Chimeric_BreakPoint']) > config['min_split_length'], ]
-        breakcontigs = list(np.unique(breakcontigs['Assembly']))
-    else:
-        print('Correcting all misassemblies')
-        breakcontigs = df.loc[df['Prediction'] > score_cut,]
-        breakcontigs = breakcontigs.loc[breakcontigs['BreakPoint'] > config['min_split_length'], ]
-        breakcontigs = breakcontigs.loc[(breakcontigs['Length'] - breakcontigs['BreakPoint']) > config['min_split_length'], ]
-        breakcontigs = list(np.unique(breakcontigs['Assembly']))
-    
+    input_file = SeqIO.parse(contig_path, "fasta")
+
     with open(corrected_contig_file, "w") as corrected_file:
-        for record in tqdm(input_file, desc = f'Correting ... '):
+        for record in tqdm(input_file, desc='Correcting ... '):
             if record.id in breakcontigs:
-                if not correct_all:
-                    bp = int(df.loc[df['Assembly'] == record.id, 'Chimeric_BreakPoint'].values[0])
-                else:
-                    bp = int(df.loc[df['Assembly'] == record.id, 'BreakPoint'].values[0])
+                bp = int(df.loc[df['Assembly'] == record.id, 'BreakPoint'].values[0])
                 corrected_file.write(">" + record.id + "_1\n")
                 corrected_file.write(str(record.seq[:bp]) + "\n")
                 corrected_file.write(">" + record.id + "_2\n")
@@ -217,4 +152,6 @@ def correct(args):
             else:
                 corrected_file.write(">" + record.id + "\n")
                 corrected_file.write(str(record.seq) + "\n")
-    print(f"A total of " + str(len(breakcontigs)) + " misassembled contigs are corrected")
+
+    print(f"A total of {len(breakcontigs)} misassembled contigs are corrected")
+    print(f"Final outputs in {output_folder_path}")

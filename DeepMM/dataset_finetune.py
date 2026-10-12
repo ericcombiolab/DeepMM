@@ -1,7 +1,6 @@
 import os
-import shutil
+import csv
 import random
-import threading
 import multiprocessing
 
 import pysam
@@ -59,8 +58,9 @@ def balance_sample(folder_path):
 
 def save_feature(window_name, window_feature, label, file_folder):
     file = f'{window_name}_{label}.npy'
-    if file not in os.listdir(file_folder):
-        np.save(os.path.join(file_folder, file), window_feature)
+    path = os.path.join(file_folder, file)
+    if not os.path.exists(path):
+        np.save(path, window_feature)
 
 def get_positive_window(proper_bp_contig_names, contig_path, align_path, positive_contig, comm, file_folder):
     with pysam.FastaFile(contig_path) as contig_file:
@@ -70,7 +70,7 @@ def get_positive_window(proper_bp_contig_names, contig_path, align_path, positiv
                 if len(read_infos) >= 10:
                     contig_len = len(contig_seq)
                     skip_len = skip_perc * contig_len if skip_perc * contig_len < 1000 else 1000
-                    is_avg = get_is_avg(read_infos, contig_seq)
+                    is_avg, read_infos = get_is_avg(read_infos, contig_seq)
                     for label_point in positive_contig[contig_name]['break_point']:
                         #* pick proper break point label
                         if skip_len + window_len / 2 <= label_point < contig_len - skip_len - window_len / 2:
@@ -107,7 +107,7 @@ def get_negative_window(negative_contig_names, contig_path, align_path, comm, fi
                 contig_len = len(contig_seq)
                 if len(read_infos) >= 10:
                     skip_len = skip_perc * contig_len if skip_perc * contig_len < 1000 else 1000
-                    is_avg = get_is_avg(read_infos, contig_seq)
+                    is_avg, read_infos = get_is_avg(read_infos, contig_seq)
                     #* Forward 
                     for point in range(int(skip_len + window_len / 2), int(contig_len - skip_len - window_len / 2), window_len):
                         window_feature, multiple_transloc, zero_fea, window_ts, window_bp = get_feature(point = point, contig_seq=contig_seq, read_infos = read_infos, window_len = config['window_len'], is_avg=is_avg, align_path = align_path)
@@ -125,36 +125,79 @@ def get_training_data(args, status):
     alignment = args.alignment
     file_folder = f'{feature_folder}/{status}'
     os.makedirs(file_folder, exist_ok=True)
-    community = os.listdir(data_folder)
-    community.sort(key=int)
-    pool = multiprocessing.Pool(processes=30)
-    for comm in community:
-        label_path = os.path.join(data_folder, comm, label)
-        contig_path = os.path.join(data_folder, comm, assembly)
-        align_path = os.path.join(data_folder, comm, alignment)
+    manifest_mode = bool(args.community_split_manifest)
+    if manifest_mode:
+        with open(args.community_split_manifest, newline='') as handle:
+            rows = list(csv.DictReader(handle, delimiter='\t'))
+        required = {'split', 'sample_id', 'path'}
+        if not rows or not required.issubset(rows[0]):
+            raise ValueError(
+                f"Community manifest requires columns {sorted(required)}"
+            )
+        communities = [
+            (row['sample_id'], row['path'])
+            for row in rows
+            if row['split'] == status
+        ]
+    else:
+        names = os.listdir(data_folder)
+        names.sort(key=int)
+        communities = [
+            (name, os.path.join(data_folder, name)) for name in names
+        ]
+
+    if not communities:
+        raise ValueError(f"No {status} communities found")
+
+    pool = multiprocessing.Pool(
+        processes=min(args.data_workers, len(communities))
+    )
+    jobs = []
+    for comm, community_path in communities:
+        label_path = os.path.join(community_path, label)
+        contig_path = os.path.join(community_path, assembly)
+        align_path = os.path.join(community_path, alignment)
+        for required_path in (label_path, contig_path, align_path):
+            if not os.path.isfile(required_path):
+                raise FileNotFoundError(required_path)
         negative_contig, positive_contig = extract_contig_info(label_path)
 
         negative_contig_names = [contig_name for contig_name in negative_contig.keys() if min_contig_len <= negative_contig[contig_name]['contig_len'] < max_contig_len]
         positive_contig_names = [contig_name for contig_name in positive_contig.keys() if  min_contig_len <= positive_contig[contig_name]['contig_len'] < max_contig_len]
 
-        po_train_end = int(0.8 * len(positive_contig_names))
-        ne_train_end = int(0.8 * len(negative_contig_names))
+        if not manifest_mode:
+            po_train_end = int(0.8 * len(positive_contig_names))
+            ne_train_end = int(0.8 * len(negative_contig_names))
+            if status == 'train':
+                positive_contig_names = positive_contig_names[:po_train_end]
+                negative_contig_names = negative_contig_names[:ne_train_end]
+            elif status == 'eval':
+                positive_contig_names = positive_contig_names[po_train_end:]
+                negative_contig_names = negative_contig_names[ne_train_end:]
 
-        if status == 'train':
-            positive_contig_names = positive_contig_names[:po_train_end]
-            negative_contig_names = negative_contig_names[:ne_train_end]
-        elif status == 'eval':
-            positive_contig_names = positive_contig_names[po_train_end:]
-            negative_contig_names = negative_contig_names[ne_train_end:]
-
-        max_connections = threading.Semaphore(2)
-        po_result = pool.apply_async(get_positive_window, (positive_contig_names, contig_path, align_path, positive_contig, comm, file_folder))
-        ne_result = pool.apply_async(get_negative_window, (negative_contig_names, contig_path, align_path, comm, file_folder))
+        jobs.append(pool.apply_async(
+            get_positive_window,
+            (
+                positive_contig_names, contig_path, align_path,
+                positive_contig, comm, file_folder,
+            ),
+        ))
+        jobs.append(pool.apply_async(
+            get_negative_window,
+            (
+                negative_contig_names, contig_path, align_path,
+                comm, file_folder,
+            ),
+        ))
 
     pool.close()
     pool.join()
-    print('Data cleaning ... ')
-    balance_sample(folder_path = f'{feature_folder}/{status}')
+    # apply_async otherwise hides worker exceptions.
+    for job in jobs:
+        job.get()
+    if args.balance_output:
+        print('Balancing generated output ... ')
+        balance_sample(folder_path=f'{feature_folder}/{status}')
 
 def get_fine_tune_dataset(args):
     if not args.eval_only:

@@ -10,7 +10,7 @@ from scipy.interpolate import make_interp_spline
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 import sklearn.metrics as sm
 
 
@@ -27,6 +27,8 @@ class Trainer():
         self.clip = args.clip
         self.weight_decay = args.weight_decay
         self.checkPoint_path =args.checkPoint_path
+        self.balanced_sampler = args.balanced_sampler
+        self.selection_metric = args.selection_metric
 
         np.random.seed(42)
         torch.manual_seed(42)
@@ -37,9 +39,34 @@ class Trainer():
         torch.backends.cudnn.benchmark = False
 
         self.model = model
-        self.optimizer = optim.Adam(self.model.parameters(), lr = self.lr, weight_decay = self.weight_decay)
+        trainable = [p for p in self.model.parameters() if p.requires_grad]
+        self.optimizer = optim.Adam(
+            trainable, lr=self.lr, weight_decay=self.weight_decay
+        )
         self.criterion = nn.CrossEntropyLoss()
         self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size = 3, gamma = 0.8)
+        logging.info(
+            "Trainable parameters: %d / %d",
+            sum(p.numel() for p in trainable),
+            sum(p.numel() for p in self.model.parameters()),
+        )
+
+    def _training_sampler(self, dataset):
+        if not self.balanced_sampler:
+            return None
+        labels = [
+            int(name[:-4].rsplit('_', 1)[-1])
+            for name in dataset.feature_files
+        ]
+        counts = np.bincount(labels, minlength=2)
+        if np.any(counts == 0):
+            raise ValueError(
+                f"Balanced sampler requires both classes, got counts={counts}"
+            )
+        sample_weights = [1.0 / counts[label] for label in labels]
+        return WeightedRandomSampler(
+            sample_weights, num_samples=len(labels), replacement=True
+        )
 
     def get_lr(self, optimizer: torch.optim):
         for param_group in optimizer.param_groups:
@@ -90,12 +117,15 @@ class Trainer():
                 epoch,
                 lr):
         
-        train_dataloader = DataLoader(  
-                                    dataset = training_dataset,
-                                    batch_size = self.batch_size, 
-                                    drop_last = True, 
-                                    num_workers=8,
-                                    )
+        sampler = self._training_sampler(training_dataset)
+        train_dataloader = DataLoader(
+            dataset=training_dataset,
+            batch_size=self.batch_size,
+            shuffle=sampler is None,
+            sampler=sampler,
+            drop_last=True,
+            num_workers=8,
+        )
         self.model.train()
         epoch_loss = 0
         batch_count = 0
@@ -119,7 +149,13 @@ class Trainer():
 
     def evaluate(self, 
                 evaluating_dataset):
-        eval_dataloader = DataLoader(dataset = evaluating_dataset, batch_size = self.batch_size, shuffle = True, drop_last = True, num_workers=8)
+        eval_dataloader = DataLoader(
+            dataset=evaluating_dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            drop_last=False,
+            num_workers=8,
+        )
         self.model.eval()
         epoch_loss = 0
         batch_count = 0
@@ -135,22 +171,37 @@ class Trainer():
        
         return evaluate_loss
     
-    def cal_metrics(self,dataset):
-        dataloader = DataLoader(dataset = dataset, batch_size = self.batch_size, shuffle = True, drop_last = True, num_workers=8)
+    def cal_metrics(self, dataset):
+        dataloader = DataLoader(
+            dataset=dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            drop_last=False,
+            num_workers=8,
+        )
         self.model.eval()
         true_label = []
         pred_label = []
+        positive_score = []
 
         with torch.no_grad():
             for _, features, labels in dataloader:
                 features = features.cuda(self.device)
-                emb, predictions = self.model(features)
-                predictions = predictions.cpu()
-                true_label.extend(torch.argmax(labels, dim=1)) 
-                pred_label.extend(torch.argmax(predictions, dim=1))
+                _, logits = self.model(features)
+                probabilities = torch.softmax(logits, dim=1).cpu()
+                batch_true = torch.argmax(labels, dim=1).numpy()
+                true_label.extend(batch_true)
+                pred_label.extend(torch.argmax(probabilities, dim=1).numpy())
+                positive_score.extend(probabilities[:, 1].numpy())
 
-        acc = sm.accuracy_score(true_label, pred_label)
-        return round(acc, 3)
+        result = {
+            "accuracy": float(sm.accuracy_score(true_label, pred_label)),
+            "auroc": float(sm.roc_auc_score(true_label, positive_score)),
+            "auprc": float(sm.average_precision_score(
+                true_label, positive_score
+            )),
+        }
+        return result
 
 
     def train(self,
@@ -158,6 +209,7 @@ class Trainer():
             evaluating_dataset):
         
         best_eval_loss = float('inf')
+        best_eval_auprc = -float('inf')
         x_epochs = []
         y_train_loss = []
         y_eval_loss = []
@@ -172,19 +224,33 @@ class Trainer():
             train_loss = self.train_(training_dataset, epoch, lr)
 
             evaluate_loss  = self.evaluate(evaluating_dataset)
-            train_acc = self.cal_metrics(training_dataset)
-            eval_acc= self.cal_metrics(evaluating_dataset)
-            y_train_acc.append(train_acc)
-            y_eval_acc.append(eval_acc)
+            train_metrics = self.cal_metrics(training_dataset)
+            eval_metrics = self.cal_metrics(evaluating_dataset)
+            y_train_acc.append(train_metrics["accuracy"])
+            y_eval_acc.append(eval_metrics["accuracy"])
             logging.info('Window length: {}'.format(config['window_len']))
-            logging.info(f'Training loss: {train_loss}, acc: {train_acc}')
-            logging.info(f'Evaluating loss: {evaluate_loss}, acc: {eval_acc}')
+            logging.info(
+                f"Training loss: {train_loss}, metrics: {train_metrics}"
+            )
+            logging.info(
+                f"Evaluating loss: {evaluate_loss}, metrics: {eval_metrics}"
+            )
 
             # Model save
-            if evaluate_loss < best_eval_loss:
+            improved = (
+                eval_metrics["auprc"] > best_eval_auprc
+                if self.selection_metric == "auprc"
+                else evaluate_loss < best_eval_loss
+            )
+            if improved:
                 best_eval_loss = evaluate_loss
+                best_eval_auprc = eval_metrics["auprc"]
                 torch.save(self.model.state_dict(), os.path.join(self.checkPoint_path, f'fine_tuned_checkPoint_{self.epochs}.pt'))
-                logging.info('Evaluate loss model saved')
+                logging.info(
+                    "Best model saved: eval_loss=%f eval_auprc=%f",
+                    evaluate_loss,
+                    eval_metrics["auprc"],
+                )
 
             x_epochs.append(epoch+1)
             y_train_loss.append(train_loss)
@@ -203,10 +269,13 @@ def finetune(args):
     training_dataset = EvalDataset(finetune_dataset_path,'train')
     evaluating_dataset = EvalDataset(finetune_dataset_path, 'eval')
 
-    model = LinearEvaluation(ResNetSimCLR(base_model='resnet50', out_dim=128))
     model_path = args.pretrain_model_path
-    model.load_state_dict(torch.load(model_path, weights_only=True))
-    model = FinetuneModel(model)
+    pretrain_state = torch.load(model_path, weights_only=True)
+    arch = infer_arch_from_state_dict(pretrain_state)
+    print(f'Detected pretrained backbone: {arch} ({model_path})')
+    model = LinearEvaluation(ResNetSimCLR(base_model=arch, out_dim=128))
+    model.load_state_dict(pretrain_state)
+    model = FinetuneModel(model, unfreeze=args.unfreeze)
     model = model.cuda(args.gpu_device)
 
     trainer = Trainer(model = model, args=args)

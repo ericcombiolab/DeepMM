@@ -17,7 +17,9 @@ Make sure you have the dependencies below installed and accessible in your $PATH
 - torchvision
 - scikit-learn
   
-The above packages can be installed with DeepMM
+The above packages can be installed with DeepMM.
+
+Tested environment: Python 3.9 with torch 2.5.1+cu121, torchvision 0.20.1+cu121, pysam 0.24.0, biopython 1.85, scikit-learn 1.6.1, pandas 2.3.3, scipy 1.13.1, matplotlib 3.9.4, numpy 2.0.2, tqdm 4.70.0.
 
 ### Other dependencies
 - [bwa](https://github.com/lh3/bwa)
@@ -28,7 +30,7 @@ The above packages are necessary for data preparation.
 
 ### Installation
 
-##### Install DeepMM via git
+### Install
 
 ```
 git clone https://github.com/ericcombiolab/DeepMM.git
@@ -42,7 +44,8 @@ DeepMM -h
 ```
 
 ## Quick Start
-- Alignments
+
+### 1) Prepare alignments
 
 ```
 bwa index $contigs.fa
@@ -52,26 +55,27 @@ samtools view -h -q 10 -m 50 -F 4 -b $align.sam > $align.bam
 samtools sort $align.bam -o $sort.bam
 samtools index $sort.bam
 ```
-Here we provide two model weight with different read profile (insert_size_mean, insert_size_standard_deviation)
-- default: (200, 20)
-  ```
-  mkdir -p ./pretrain-model-weight
-  wget -P ./pretrain-model-weight https://zenodo.org/records/15702546/files/checkpoint.pt
-  ```
-- CAMI-type: (270, 27)
-  ```
-  mkdir -p ./finetune-model-weight 
-  wget -P ./finetune-model-weight https://zenodo.org/records/15702546/files/cami_finetune_checkPoint.pt
-  ```
 
-- Run DeepMM  
-``` misassembly identification and correction;
-DeepMM correct --folder_path /path/to/your/data\
-               --model_weight_path /path/to/model\
-               --fine_tune\ ##(only pass the parameter when you use finetuned model weight)
-               --contig_threads 8\
-               --gpu_device cuda:0
+The data folder passed to DeepMM should contain `final.contigs.fa` and `sort.bam`.
+
+### 2) Download the model weight
+
 ```
+mkdir -p ./pretrain-model-weight
+wget -P ./pretrain-model-weight https://github.com/ericcombiolab/DeepMM/releases/latest/download/checkpoint.pt
+```
+
+### 3) Run DeepMM
+
+```
+# predict: window inference + label-free E-value calibration (final per-contig score)
+DeepMM predict --folder_path /path/to/your/data \
+               --model_weight_path ./pretrain-model-weight/checkpoint.pt
+
+# correct: split misassembled contigs (uses the calibrated predictions by default)
+DeepMM correct --folder_path /path/to/your/data
+```
+
 ## Example
 
 Files in `./example`
@@ -82,31 +86,29 @@ Files in `./example`
 - `sort.bam.bai`
 
 ```
-DeepMM correct --folder_path ./example/final.contigs.fa \
-               --model_weight_path ./finetune-model-weight/cami_finetune_checkPoint.pt \
-               --fine_tune \
+DeepMM predict --folder_path ./example \
+               --model_weight_path ./pretrain-model-weight/checkpoint.pt \
                --contig_threads 8 \
                --gpu_device cuda:0
+
+DeepMM correct --folder_path ./example
 ```
-The output is under `./example/deepmm_output`
+The output is under `./example/deepmm_output`: the per-contig prediction output `assembly_prediction.escore.tsv` (calibrated score `S = -log10(p)`, the score used by `correct` and in the paper) and the corrected assembly `corrected_contigs.fa`.
 
 ## Supervised Fine-Tuning on new datasets (Highly recommend)
-As reads from different sequencers have slight differernt, which may effect model performance. We highly recommand you fine-tuning model though cause some time, but worth to do. Only one community dataset could finish SFT.
+As reads from different sequencers have slight different, which may effect model performance. We highly recommend you fine-tuning model though cause some time, but worth to do. Only one community dataset could finish SFT.
 ### Software
 - [MGSIM](https://github.com/nick-youngblut/MGSIM)
 - [MEGAHIT](https://github.com/voutcn/megahit) or [metaSPAdes](https://github.com/ablab/spades)
-- [metaQusat](https://quast.sourceforge.net/metaquast)
-### Download reference
-```
-wget https://zenodo.org/records/15702546/files/reference.tar.gz
-wget https://zenodo.org/records/15702546/files/genome_list.tsv
-```
+- [metaQUAST](https://quast.sourceforge.net/metaquast)
+### Prepare genome list
+Use your own reference genomes for simulation: provide a `genome_list.tsv` listing their FASTA paths (as used in the MGSIM commands below).
 ### Create read error profile
 ```
 art_profiler_illumina error_profile_ path/to/your/read_1/file fastq
 art_profiler_illumina error_profile_ path/to/your/read_2/file fastq
 ```
-this can creat two read file in current directory
+this can create two read file in current directory
 ```
 error_profile_R1.txt
 error_profile_R2.txt
@@ -123,7 +125,7 @@ MGSIM communities --abund-dist=lognormal \
                   ./genome_list.tsv \
                   ./simulation/communities/comm
 
-#Tips: --art-sdev can# be set 10% of --art-mflen
+#Tips: --art-sdev can be set 10% of --art-mflen
 MGSIM reads --art-mflen $your_sequencer_insert_size_mean\
             --art-sdev $your_sequencer_insert_size_standard_deviation\
             --art-len 150\
@@ -201,7 +203,7 @@ DeepMM finetune_data --data_folder ./simulation/data \
 ### Fine-tune
 #### Download pretrained model weight
 ```
-wget -P ./pretrain-model-weight https://zenodo.org/records/14863005/files/checkPoint.pt
+wget -P ./pretrain-model-weight https://github.com/ericcombiolab/DeepMM/releases/latest/download/checkpoint.pt
 ```
 
 ```
@@ -216,7 +218,7 @@ DeepMM finetune --epochs 50 \
                 --finetune_dataset_path ./simulation/feature
 ```
 ## Pretraining on new datasets
-You can simulate your own pretrain datasets with differe settings. The dataset simulation processing is similar with `Fine-tuning` seciton. However, this is time-consuming, and fine-tuning can help model already.
+You can simulate your own pretrain datasets with differe settings. The dataset simulation processing is similar with `Fine-tuning` section. However, this is time-consuming, and fine-tuning can help model already.
 
 ```
 DeepMM pretrain_data --data_folder /path/to/data \
@@ -225,14 +227,14 @@ DeepMM pretrain_data --data_folder /path/to/data \
                      --assembly final.contigs.fa \
                      --alignment sort.bam \
 
-DeepMM pretrain \
+python -m DeepMM.ddp_pretrain \
         --pretrain_dataset_path 'path/to/pretrain/dataset' \
         --eval_dataset_path 'path/to/evaluation/dataset' \ # This dataset can generated by finetune dataset module
         --epochs 50 \
         --batch-size 64 \
         --gpus $GPU_NUMBERS \
         --lr 0.003 \
-        --checkPoint_path ./pretiran-model-weight
+        --checkPoint_path ./pretrain-model-weight
 ```
 ### DataParallel
 ```
@@ -245,100 +247,70 @@ GPU_NUMBERS=4
 
 CUDA_VISIBLE_DEVICES=4,5,6,7 torchrun \
         --nproc_per_node=$GPU_NUMBERS \
-        /DeepMM/DeepMM/ddp_pretrain.py \ # Local DeemMM file
+        /DeepMM/DeepMM/ddp_pretrain.py \ # Local DeepMM file
         --pretrain_dataset_path 'path/to/pretrain/dataset' \
         --eval_dataset_path 'path/to/evaluation/dataset' \ # This dataset can generated by finetune dataset module
         --epochs 50 \
         --batch-size 64 \
         --gpus $GPU_NUMBERS \
         --lr 0.003 \
-        --checkPoint_path ./pretiran-model-weight
+        --checkPoint_path ./pretrain-model-weight
 
 ```
 
 
 
 ## Output
-The output folder ``deepmm_output`` will contain
-1. Misassembly prediction for each contig:  
-**assembly_prediction.tsv**   
-Each column:
-     - Assembly: Assembly id
-     - BreakPoint: Misassembly breakPoint location with max prediction
-     - Prediction: Max misassembly prediction score
-     - Length: Assembly length
-     - Chimeric BreakPoint: Chimeric misassembly brekpoint location with max prediction
-     - Chimeric Prediction: Max chimeric misassembly prediction
-1. Corrected assembly file:  
-**corrected_contigs.fa**
+The output folder `deepmm_output` contains:
+
+1. **assembly_prediction.escore.tsv** — the per-contig prediction output: for every contig, the label-free calibrated significance score S = -log10(p), computed against an empirical null built from the same sample. Columns: `Assembly` (contig id), `BreakPoint` (predicted junction position; -1 below the E-value gate), `Prediction` (the calibrated score S), `Length`, `Chimeric_BreakPoint`, `Chimeric_Prediction` (interspecies-specific heuristic, kept for reference). This `Prediction` value is the final DeepMM score, used by `correct` and quoted in the paper.
+
+2. **corrected_contigs.fa** — the input assembly with every selected contig split once at its predicted breakpoint (fragments suffixed `_1`, `_2`); contigs below the cutoff are copied unchanged.
+
+(The uncalibrated window-maximum table `assembly_prediction.tsv` is kept only as an intermediate artifact; it is not the DeepMM output.)
 
 # Complete option list
-## 1. correct
 
-Used to identify and correct misassemblies.
+## 1. predict
+`DeepMM predict` — identify misassemblies (inference only). The label-free E-value calibration is always applied, and its calibrated score is the final per-contig output.
+- `--folder_path` (default=''): path to the data folder (contig FASTA + sorted BAM).
+- `--model_weight_path` (default='./pretrain-model-weight/checkpoint.pt'): path to the model weight.
+- `--fine_tune` (flag; not needed for the released weight): use a fine-tuned checkpoint.
+- `--contig_threads` (int, 8), `--window_threads` (int, 8): CPU threads for extraction / window processing.
+- `--gpu_device` (default='cuda:0'): GPU device id.
+- `--file_name` (assembly_prediction.tsv): raw prediction TSV name.
+- `--contig_file_name` (final.contigs.fa), `--bam_file_name` (sort.bam).
+- `--threshold` (0.9): window-score cutoff used for the BreakPoint column.
+- `--infer_batch_size` (32), `--contig_chunk_size` (8), `--max_windows_per_chunk` (1024): GPU streaming options.
+- `--max_contig_length` (inf): maximum contig length to process.
+- `--output_dir` (default: `<folder_path>/deepmm_output`), `--checkpoint_file` (checkpoint_predictions.jsonl), `--resume` / `--no_resume` (default: resume).
+- The calibrated score is written next to the run as `assembly_prediction.escore.tsv` (`--escore_file_name`); `--escore_mode`, `--escore_r` and `--escore_floor` tune the empirical null.
 
-### Parameters:
-- `--folder_path` (str, default=''): Path to data folder.
-- `--model_weight_path` (str, default='./pretrain-model-weight/checkPoint.pt'): Path to model weight.
-- `--fine_tune` (action='store_true'): Use fine-tune model.
-- `-t`, `--threads` (int, default=8): Maximum number of threads [default: 8].
-- `--gpu_device` (str, default='cuda:0'): GPU device ID.
+## 2. correct
+`DeepMM correct` — split misassembled contigs using the calibrated per-contig predictions (no inference).
+- `--folder_path` (default=''): data folder containing the contig FASTA.
+- `--contig_file_name` (final.contigs.fa); `--bam_file_name` (unused, kept for CLI compatibility).
+- `--output_dir` (default: `<folder_path>/deepmm_output`): folder holding the prediction TSV and receiving corrected_contigs.fa.
+- `--threshold`: splitting cutoff on the calibrated `Prediction` score; defaults to -log10(0.05). Keep it at or above the default, otherwise contigs can be selected while their BreakPoint is still -1 and are then dropped.
 
-## 2. pretrain
+## 3. escore
+`DeepMM escore` — utility that recomputes the calibrated per-contig score (S = -log10 p) from an existing run.
+- `--folder_path`, `--output_dir`; `--file_name` (assembly_prediction.tsv); `--out_file_name` (default assembly_prediction.escore.tsv); `--in_place`.
+- `--mode` (calibrated); `--r`; `--floor` / `--no_floor`; `--abstain_score` (0.0); `--bp_min_e` (default -log10(0.05); keep at or below the threshold passed to `correct`).
 
-Used to pretrain the model.
+## 4. finetune
+`DeepMM finetune` — supervised fine-tuning on your own communities/features (optional).
+- `--epochs` (50), `--batch_size` (256), `--lr` (0.0001), `--clip` (1), `--weight_decay` (0.0001), `--gpu_device` (cuda:0).
+- `--checkPoint_path` (./fine-tune-model-weight), `--pretrain_model_path` (./pretrain-model-weight/checkpoint.pt), `--finetune_dataset_path`.
+- `--unfreeze` (linear|layer4|layer3_layer4|all; default layer4), `--balanced_sampler`, `--selection_metric` (loss|auprc; default auprc).
 
-### Parameters:
-- `--eval_dataset_path` (str, metavar='DIR', default=''): Path to eavl dataset.
-- `--pretrain_dataset_path` (str, metavar='DIR', default=''): Path to dataset.
-- `-a`, `--arch` (str, metavar='ARCH', default='resnet50'): Model architecture: resnet18 | resnet50 (default: resnet50).
-- `-j`, `--workers` (int, default=32, metavar='N'): Number of data loading workers (default: 32).
-- `--epochs` (int, default=100, metavar='N'): Number of total epochs to run.
-- `-b`, `--batch-size` (int, default=64, metavar='N'): Mini-batch size (default: 64).
-- `--lr`, `--learning-rate` (float, default=0.0003, metavar='LR', dest='lr'): Initial learning rate.
-- `--wd`, `--weight-decay` (float, default=1e-4, metavar='W', dest='weight_decay'): Weight decay (default: 1e-4).
-- `--seed` (int, default=42): Seed for initializing training.
-- `--out_dim` (int, default=128): Feature dimension (default: 128).
-- `--temperature` (float, default=0.07): Softmax temperature (default: 0.07).
-- `--n_views` (int, default=5, metavar='N'): Number of views for contrastive learning training.
-- `--gpus` (int, default=1): Number of GPUs.
-- `--checkPoint_path` (str, default='./pretiran-model-weight/checkPoint_{formatted_time}'): Checkpoint path.
-- `--fp16-precision` (action='store_true'): Whether or not to use 16-bit precision GPU training.
+## 5. pretrain_data
+`DeepMM pretrain_data` — generate a pretraining dataset.
+- `--data_folder`, `--feature_folder`, `--label` (all_alignments_final-contigs.tsv), `--assembly` (final.contigs.fa), `--alignment` (sort.bam), `--pretrain_dataset_path`.
 
-## 3. finetune
+## 6. finetune_data
+`DeepMM finetune_data` — generate a fine-tuning dataset.
+- `--data_folder`, `--feature_folder`, `--label`, `--assembly`, `--alignment`.
+- `--eval_only`; `--data_workers` (8); `--community_split_manifest` (split at whole-community level); `--balance_output`.
 
-Used to fine-tune the model.
-
-### Parameters:
-- `--epochs` (int, default=50): Number of epochs to run.
-- `--batch_size` (int, default=256): Batch size.
-- `--lr` (float, default=0.0001): Learning rate.
-- `--gpu_device` (str, default='cuda:0'): GPU device ID.
-- `--clip` (int, default=1): Gradient clipping value.
-- `--weight_decay` (float, default=0.0001): Weight decay.
-- `--checkPoint_path` (str, default='./fine-tune-model-weight'): Checkpoint path.
-- `--pretrain_model_path` (str, default='./pretrain-model-weight/checkpoint.pt'): Pretrained model path.
-- `--finetune_dataset_path` (str, default=''): Fine-tune dataset path.
-
-## 4. pretrain_data
-
-Used to generate pretrain dataset.
-
-### Parameters:
-- `--data_folder` (str, default=''): Path to data folder.
-- `--feature_folder` (str, default=''): Path to feature folder.
-- `--label` (str, default='all_alignments_final-contigs.tsv'): Label file name.
-- `--assembly` (str, default='final.contigs.fa'): Assembly file name.
-- `--alignment` (str, default='sort.bam'): Alignment file name.
-- `--pretrain_dataset_path` (str, default=''): Path to pretrain dataset.
-
-## 5. finetune_data
-
-Used to generate finetune dataset.
-
-### Parameters:
-- `--data_folder` (str, default=''): Path to data folder.
-- `--feature_folder` (str, default=''): Path to feature folder.
-- `--label` (str, default='all_alignments_final-contigs.tsv'): Label file name.
-- `--assembly` (str, default='final.contigs.fa'): Assembly file name.
-- `--alignment` (str, default='sort.bam'): Alignment file name.
+The pretraining loop itself is run with the DDP script: `python -m DeepMM.ddp_pretrain --pretrain_dataset_path ... --eval_dataset_path ... --epochs 50 --batch-size 64 --lr 0.003 --checkPoint_path ...` (see "Pretraining on new datasets" above).
